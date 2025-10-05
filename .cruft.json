@@ -1,0 +1,28 @@
+{
+  "template": "https://github.com/FAIRmat-NFDI/cookiecutter-nomad-plugin",
+  "commit": "3c5b9b8bfb4c6e91c3f84aa6e5e453f2b721a326",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "full_name": "Maximilian Wolf",
+      "email": "maximilian.wolf@ait.ac.at",
+      "github_username": "mxwalbert",
+      "plugin_name": "ait-echt-oasis",
+      "module_name": "ait_echt_oasis",
+      "short_description": "A NOMAD plugin containing schemas, parsers, etc. for material processing and analysis methods at the ECHT group of AIT.",
+      "version": "0.1.0",
+      "license": "Apache Software License 2.0",
+      "include_schema_package": true,
+      "include_normalizer": true,
+      "include_parser": true,
+      "include_app": true,
+      "include_example_uploads": true,
+      "_copy_without_render": [
+        "*.html"
+      ],
+      "_template": "https://github.com/FAIRmat-NFDI/cookiecutter-nomad-plugin",
+      "_commit": "3c5b9b8bfb4c6e91c3f84aa6e5e453f2b721a326"
+    }
+  },
+  "directory": null
+}
