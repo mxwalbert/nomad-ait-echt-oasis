@@ -15,7 +15,7 @@ from nomad.datamodel.metainfo.workflow import Workflow
 from nomad.parsing.parser import MatchingParser
 
 configuration = config.get_plugin_entry_point(
-    'ait_echt_oasis.parsers:parser_entry_point'
+    'nomad_ait_echt_oasis.parsers:parser_entry_point'
 )
 
 

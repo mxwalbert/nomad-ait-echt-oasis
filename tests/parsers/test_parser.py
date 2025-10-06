@@ -2,7 +2,7 @@ import logging
 
 from nomad.datamodel import EntryArchive
 
-from ait_echt_oasis.parsers.parser import NewParser
+from nomad_ait_echt_oasis.parsers.parser import NewParser
 
 
 def test_parse_file():

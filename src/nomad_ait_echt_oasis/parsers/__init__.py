@@ -6,7 +6,7 @@ class NewParserEntryPoint(ParserEntryPoint):
     parameter: int = Field(0, description='Custom configuration parameter')
 
     def load(self):
-        from ait_echt_oasis.parsers.parser import NewParser
+        from nomad_ait_echt_oasis.parsers.parser import NewParser
 
         return NewParser(**self.model_dump())
 

@@ -14,7 +14,7 @@ from nomad.config import config
 from nomad.normalizing import Normalizer
 
 configuration = config.get_plugin_entry_point(
-    'ait_echt_oasis.normalizers:normalizer_entry_point'
+    'nomad_ait_echt_oasis.normalizers:normalizer_entry_point'
 )
 
 

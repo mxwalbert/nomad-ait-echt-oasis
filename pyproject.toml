@@ -112,12 +112,12 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [project.entry-points.'nomad.plugin']
-parser_entry_point = "ait_echt_oasis.parsers:parser_entry_point"
-schema_package_entry_point = "ait_echt_oasis.schema_packages:schema_package_entry_point"
-normalizer_entry_point = "ait_echt_oasis.normalizers:normalizer_entry_point"
-app_entry_point = "ait_echt_oasis.apps:app_entry_point"
-example_upload_entry_point = "ait_echt_oasis.example_uploads:example_upload_entry_point"
-api_entry_point = "ait_echt_oasis.apis:api_entry_point"
+parser_entry_point = "nomad_ait_echt_oasis.parsers:parser_entry_point"
+schema_package_entry_point = "nomad_ait_echt_oasis.schema_packages:schema_package_entry_point"
+normalizer_entry_point = "nomad_ait_echt_oasis.normalizers:normalizer_entry_point"
+app_entry_point = "nomad_ait_echt_oasis.apps:app_entry_point"
+example_upload_entry_point = "nomad_ait_echt_oasis.example_uploads:example_upload_entry_point"
+api_entry_point = "nomad_ait_echt_oasis.apis:api_entry_point"
 [tool.cruft]
 # Avoid updating workflow files, this leads to permissions issues
 skip = [".github/*"]

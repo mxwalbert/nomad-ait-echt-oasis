@@ -6,7 +6,7 @@ class NewNormalizerEntryPoint(NormalizerEntryPoint):
     parameter: int = Field(0, description='Custom configuration parameter')
 
     def load(self):
-        from ait_echt_oasis.normalizers.normalizer import NewNormalizer
+        from nomad_ait_echt_oasis.normalizers.normalizer import NewNormalizer
 
         return NewNormalizer(**self.model_dump())
 

@@ -16,7 +16,7 @@ from nomad.datamodel.metainfo.annotations import ELNAnnotation, ELNComponentEnum
 from nomad.metainfo import Quantity, SchemaPackage
 
 configuration = config.get_plugin_entry_point(
-    'ait_echt_oasis.schema_packages:schema_package_entry_point'
+    'nomad_ait_echt_oasis.schema_packages:schema_package_entry_point'
 )
 
 m_package = SchemaPackage()
