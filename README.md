@@ -16,7 +16,7 @@ python3.11 -m venv .pyenv
 
 Make sure to have `pip` upgraded:
 ```sh
-pip install --upgrade pip
+python -m pip install --upgrade pip
 ```
 
 We recommend installing `uv` for fast pip installation of the packages:
