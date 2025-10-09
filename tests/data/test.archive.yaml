@@ -1,3 +1,3 @@
 data:
-  m_def: nomad_ait_echt_oasis.schema_packages.schema_package.NewSchemaPackage
-  name: Markus
+  m_def: nomad_ait_echt_oasis.schema_packages.vapor_deposition.VaporDeposition
+  name: Test
