@@ -14,7 +14,7 @@ classifiers = [
 ]
 name = "nomad-ait-echt-oasis"
 description = "A NOMAD plugin containing schemas, parsers, etc. for material processing and analysis methods at the ECHT group of AIT."
-version = "0.2.0"
+version = "0.2.1"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -113,9 +113,10 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [project.entry-points.'nomad.plugin']
-schema_package_vapor_deposition_v0 = "nomad_ait_echt_oasis.schema_packages:vapor_deposition_v0"
-schema_package_physical_vapor_deposition_v0 = "nomad_ait_echt_oasis.schema_packages:physical_vapor_deposition_v0"
-schema_package_sputter_deposition_v0 = "nomad_ait_echt_oasis.schema_packages:sputter_deposition_v0"
+schema_package_infrastructure = "nomad_ait_echt_oasis.schema_packages:infrastructure"
+schema_package_vapor_deposition = "nomad_ait_echt_oasis.schema_packages:vapor_deposition"
+schema_package_physical_vapor_deposition = "nomad_ait_echt_oasis.schema_packages:physical_vapor_deposition"
+schema_package_sputter_deposition = "nomad_ait_echt_oasis.schema_packages:sputter_deposition"
 parser_entry_point = "nomad_ait_echt_oasis.parsers:parser_entry_point"
 normalizer_entry_point = "nomad_ait_echt_oasis.normalizers:normalizer_entry_point"
 app_entry_point = "nomad_ait_echt_oasis.apps:app_entry_point"

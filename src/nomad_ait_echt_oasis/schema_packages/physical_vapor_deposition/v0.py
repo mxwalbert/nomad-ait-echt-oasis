@@ -1,11 +1,10 @@
-from nomad.config import config
 from nomad.metainfo import (
     SchemaPackage,
     Section,
+    SubSection,
 )
-
 from nomad_ait_echt_oasis.schema_packages.vapor_deposition.v0 import (
-    VaporDeposition,
+    VaporDeposition, VaporDepositionStep,
 )
 
 m_package = SchemaPackage(
@@ -13,9 +12,11 @@ m_package = SchemaPackage(
     aliases=['nomad_ait_echt_oasis.schema_packages.physical_vapor_deposition'],
 )
 
-configuration = config.get_plugin_entry_point(
-    'nomad_ait_echt_oasis.schema_packages:physical_vapor_deposition_v0',
-)
+
+class PhysicalVaporDepositionStep(VaporDepositionStep):
+    """
+    A step of a physical vapor deposition process.
+    """
 
 
 class PhysicalVaporDeposition(VaporDeposition):
@@ -28,9 +29,12 @@ class PhysicalVaporDeposition(VaporDeposition):
      - PVD
      - physical vapor deposition
     """
-
     m_def = Section(
-        links=['http://purl.obolibrary.org/obo/CHMO_0001356'],
+        links=['https://purl.obolibrary.org/obo/CHMO_0001356'],
+    )
+    steps = SubSection(
+        section_def=PhysicalVaporDepositionStep,
+        repeats=True,
     )
 
 

@@ -1,14 +1,29 @@
 from nomad.config.models.plugins import SchemaPackageEntryPoint
 
 
-class VaporDepositionV0(SchemaPackageEntryPoint):
+class InfrastructureSchema(SchemaPackageEntryPoint):
     def load(self):
-        from nomad_ait_echt_oasis.schema_packages.vapor_deposition.v0 import m_package
+        from nomad_ait_echt_oasis.schema_packages.infrastructure import m_package
 
         return m_package
 
 
-vapor_deposition_v0 = VaporDepositionV0(
+infrastructure = InfrastructureSchema(
+    name='AIT ECHT Infrastructure Schema',
+    description="""
+    Schema package containing base classes for pieces of infrastructure.
+    """,
+)
+
+
+class VaporDepositionSchema(SchemaPackageEntryPoint):
+    def load(self):
+        from nomad_ait_echt_oasis.schema_packages.vapor_deposition import m_package
+
+        return m_package
+
+
+vapor_deposition = VaporDepositionSchema(
     name='AIT ECHT Vapor Deposition Schema',
     description="""
     Schema package containing base classes for the vapor deposition process.
@@ -16,16 +31,16 @@ vapor_deposition_v0 = VaporDepositionV0(
 )
 
 
-class PhysicalVaporDepositionV0(SchemaPackageEntryPoint):
+class PhysicalVaporDepositionSchema(SchemaPackageEntryPoint):
     def load(self):
-        from nomad_ait_echt_oasis.schema_packages.physical_vapor_deposition.v0 import (
+        from nomad_ait_echt_oasis.schema_packages.physical_vapor_deposition import (
             m_package,
         )
 
         return m_package
 
 
-physical_vapor_deposition_v0 = PhysicalVaporDepositionV0(
+physical_vapor_deposition = PhysicalVaporDepositionSchema(
     name='AIT ECHT Physical Vapor Deposition Schema',
     description="""
     Schema package containing base classes for the physical vapor deposition process.
@@ -33,14 +48,14 @@ physical_vapor_deposition_v0 = PhysicalVaporDepositionV0(
 )
 
 
-class SputterDepositionV0(SchemaPackageEntryPoint):
+class SputterDepositionSchema(SchemaPackageEntryPoint):
     def load(self):
-        from nomad_ait_echt_oasis.schema_packages.sputter_deposition.v0 import m_package
+        from nomad_ait_echt_oasis.schema_packages.sputter_deposition import m_package
 
         return m_package
 
 
-sputter_deposition_v0 = SputterDepositionV0(
+sputter_deposition = SputterDepositionSchema(
     name='AIT ECHT Sputter Deposition Schema',
     description="""
     Schema package containing specific classes for the sputtering process.

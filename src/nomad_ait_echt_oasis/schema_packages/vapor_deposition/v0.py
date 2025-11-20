@@ -1,20 +1,21 @@
-from nomad.config import config
-from nomad.datamodel.data import (
-    ArchiveSection,
-)
-from nomad.datamodel.metainfo.basesections import (
-    BaseSection,
-    CompositeSystem,
-    ProcessStep,
-)
 from nomad.metainfo import (
     Quantity,
     SchemaPackage,
     Section,
     SubSection,
 )
+from nomad.datamodel.data import (
+    ArchiveSection,
+)
+from nomad.datamodel.metainfo.basesections import (
+    Entity,
+    EntityReference,
+    CompositeSystem,
+    ProcessStep,
+)
+
 from nomad_material_processing.general import (
-    SampleDeposition,
+    SampleDeposition, ThinFilmStackReference,
 )
 
 m_package = SchemaPackage(
@@ -22,33 +23,41 @@ m_package = SchemaPackage(
     aliases=['nomad_ait_echt_oasis.schema_packages.vapor_deposition'],
 )
 
-configuration = config.get_plugin_entry_point(
-    'nomad_ait_echt_oasis.schema_packages:vapor_deposition_v0',
-)
+
+class MaterialSource(Entity):
+    """
+    Entity describing the source of material to be deposited.
+    """
 
 
-class MaterialSource(BaseSection):
-    pass
+class MaterialSourceUse(EntityReference):
+    """
+    Using a source of material in a vapor deposition process.
+    """
 
 
-class EnergySource(BaseSection):
-    pass
+class EnergySource(Entity):
+    """
+    Entity that describes the source of energy to generate
+    and sustain a vapor phase.
+    """
 
 
-class VaporDepositionSource(ArchiveSection):
+class EnergySourceUse(EntityReference):
+    """
+    Using a source of energy in a vapor deposition process.
+    """
+
+
+class VaporDepositionSourceConfiguration(ArchiveSection):
+    """
+    Coupled material and energy sources used in a vapor deposition process.
+    """
     material_source = SubSection(
-        section_def=MaterialSource,
-        description="""
-        The source of the material that is being evaporated.
-        Example: A sputtering target, a powder in a crucible, etc.
-        """,
+        section_def=MaterialSourceUse,
     )
     energy_source = SubSection(
-        section_def=EnergySource,
-        description="""
-        The source of the energy which is used to evaporate the material.
-        Example: A heater, a filament, a laser, a bubbler, etc.
-        """,
+        section_def=EnergySourceUse,
     )
 
 
@@ -56,8 +65,6 @@ class GasFlow(ArchiveSection):
     """
     Section describing the flow of a gas.
     """
-
-    m_def = Section()
     gas = SubSection(
         section_def=CompositeSystem,
     )
@@ -65,11 +72,14 @@ class GasFlow(ArchiveSection):
         type=float,
         unit='meter ** 3 / second',
         shape=[],
+        description="Volumetric flow of the gas.",
     )
 
 
 class ChamberEnvironment(ArchiveSection):
-    m_def = Section()
+    """
+    Section describing the environment inside a reaction chamber.
+    """
     gas_flow = SubSection(
         section_def=GasFlow,
         repeats=True,
@@ -78,11 +88,13 @@ class ChamberEnvironment(ArchiveSection):
         type=float,
         unit='pascal',
         shape=[],
+        description="Total static pressure within the reaction chamber.",
     )
-    substrate_temperature = Quantity(
+    temperature = Quantity(
         type=float,
         unit='kelvin',
         shape=[],
+        description="The temperature inside the reaction chamber during the deposition.",
     )
 
 
@@ -90,9 +102,8 @@ class VaporDepositionStep(ProcessStep):
     """
     A step of any vapor deposition process.
     """
-
     sources = SubSection(
-        section_def=VaporDepositionSource,
+        section_def=VaporDepositionSourceConfiguration,
         repeats=True,
     )
     environment = SubSection(
@@ -106,33 +117,21 @@ class VaporDeposition(SampleDeposition):
     (PVD) and Chemical Vapor Deposition (CVD).
     It involves the deposition of material from a vapor phase to a solid thin film or
     coating onto a substrate.
-     - sources:
-       Both PVD and CVD involve a source material that is transformed into
-       a vapor phase.
-       In PVD, the source material is physically evaporated or sputtered from
-       a solid target.
-       In CVD, gaseous precursors undergo chemical reactions to produce a solid material
-       on the substrate.
-     - environment:
-       The process typically takes place in a controlled environment.
-       The deposition is usually affected by the pressure in the chamber.
-       For some processes additional background gasses are also added.
     """
-
     m_def = Section(
         links=[
-            'http://purl.obolibrary.org/obo/CHMO_0001314',
-            'http://purl.obolibrary.org/obo/CHMO_0001356',
+            'https://purl.obolibrary.org/obo/CHMO_0001314',
+            'https://purl.obolibrary.org/obo/CHMO_0001356',
         ],
     )
     steps = SubSection(
-        description="""
-        The steps of the deposition process.
-        """,
         section_def=VaporDepositionStep,
         repeats=True,
     )
-    # TODO overwrite samples
+    samples = SubSection(
+        section_def=ThinFilmStackReference,
+        repeats=True,
+    )
 
 
 m_package.__init_metainfo__()
