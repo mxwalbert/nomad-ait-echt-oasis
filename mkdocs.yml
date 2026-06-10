@@ -14,9 +14,17 @@ nav:
       - Contribute to this plugin: how_to/contribute_to_this_plugin.md
       - Contribute to the documentation: how_to/contribute_to_the_documentation.md
   - Explanation: explanation/explanation.md
-  - Reference: reference/references.md
+  - Reference:
+      - References: reference/references.md
+      - Infrastructure Schema: reference/schema_infrastructure.md
+      - Physical Vapor Deposition Schema: reference/schema_physical_vapor_deposition.md
+      - Sputter Deposition Schema: reference/schema_sputter_deposition.md
+      - Vapor Deposition Schema: reference/schema_vapor_deposition.md
 plugins:
   - search
+  - gen-files:
+      scripts:
+        - docs/gen_schema_docs.py
 theme:
   name: material
   palette:
@@ -35,19 +43,23 @@ markdown_extensions:
   - attr_list
   - md_in_html
   - admonition
+  - pymdownx.extra
   - pymdownx.details
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
   - pymdownx.snippets
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - toc:
       permalink: True
   - pymdownx.arithmatex:
       generic: true
   - attr_list
   - mkdocs-click
-  - pymdownx.extra
 extra:
   generator: false
   homepage: https://nomad-lab.eu
@@ -55,6 +67,5 @@ use_directory_urls: false
 extra_css:
   - stylesheets/extra.css
 extra_javascript:
-  - javascript.js
   - https://polyfill.io/v3/polyfill.min.js?features=es6
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
