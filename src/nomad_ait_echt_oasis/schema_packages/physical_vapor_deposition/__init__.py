@@ -1,1 +1,0 @@
-from nomad_ait_echt_oasis.schema_packages.physical_vapor_deposition.v0 import *

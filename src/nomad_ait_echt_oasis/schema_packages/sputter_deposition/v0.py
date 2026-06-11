@@ -1,37 +1,24 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nomad.datamodel.datamodel import (
-        EntryArchive,
-    )
-    from structlog.stdlib import (
-        BoundLogger,
-    )
+    pass
 
-from nomad.metainfo import (
-    SchemaPackage,
-    Section,
-    SubSection,
-    Quantity,
-    MEnum
-)
-from nomad.datamodel.metainfo.annotations import (
-    ELNAnnotation
-)
+from nomad.datamodel.metainfo.annotations import ELNAnnotation
 from nomad.datamodel.metainfo.basesections import (
     Entity,
     EntityReference,
 )
-from nomad_ait_echt_oasis.schema_packages.vapor_deposition import (
-    MaterialSource,
-    MaterialSourceUse,
-    EnergySource,
-    EnergySourceUse,
-    VaporDepositionSourceConfiguration
-)
-from nomad_ait_echt_oasis.schema_packages.physical_vapor_deposition import (
+from nomad.metainfo import MEnum, Quantity, SchemaPackage, Section, SubSection
+from nomad_material_processing.vapor_deposition.pvd.general import (
     PhysicalVaporDeposition,
-    PhysicalVaporDepositionStep,
+    PVDEvaporationSource,
+    PVDSource,
+    PVDStep,
+)
+
+from nomad_ait_echt_oasis.schema_packages.infrastructure import (
+    ConsumableEntry,
+    DeviceEntry,
 )
 
 m_package = SchemaPackage(
@@ -40,16 +27,18 @@ m_package = SchemaPackage(
 )
 
 
-class SputterTarget(MaterialSource):
+class SputterTarget(Entity, ConsumableEntry):
     """
-    A consumable which is used as source of material in a sputter deposition process.
+    A consumable which is used as source of material
+    in a sputter deposition process.
     """
 
 
-class SputterTargetUse(MaterialSourceUse):
+class SputterTargetUse(EntityReference):
     """
     Using a sputter target in a deposition process.
     """
+
     reference = Quantity(
         type=SputterTarget,
         a_eln=ELNAnnotation(
@@ -59,57 +48,40 @@ class SputterTargetUse(MaterialSourceUse):
     )
 
 
-class SputterSource(EnergySource):
+class SputterCathode(Entity, DeviceEntry):
     """
     A device which holds a target in a sputter deposition process.
     """
 
 
-class SputterSourceUse(EnergySourceUse):
+class SputterCathodeUse(EntityReference):
     """
-    Using a sputter source in a deposition process.
+    Using a sputter cathode in a deposition process.
     """
+
     reference = Quantity(
-        type=SputterSource,
+        type=SputterCathode,
         a_eln=ELNAnnotation(
             component='ReferenceEditQuantity',
-            label='sputter source reference',
+            label='sputter cathode reference',
         ),
     )
 
 
-class SputterPowerSupply(Entity):
+class SputterPowerSupply(Entity, DeviceEntry):
     """
-    A device which supplies power to a source in a sputter deposition process.
+    A device which supplies power to a source
+    in a sputter deposition process.
     """
+
     supported_modes = Quantity(
         type=MEnum(
             'direct current',
             'radio frequency',
             'pulsed direct current',
-            'high power impuls'
+            'high power impuls',
         ),
-        shape=['*']
-    )
-    max_power = Quantity(
-        type=float,
-        unit='W',
-        shape=[]
-    )
-    max_voltage = Quantity(
-        type=float,
-        unit='V',
-        shape=[]
-    )
-    max_current = Quantity(
-        type=float,
-        unit='A',
-        shape=[]
-    )
-    rf_frequency = Quantity(
-        type=float,
-        unit='Hz',
-        shape=[]
+        shape=['*'],
     )
 
 
@@ -117,6 +89,7 @@ class SputterPowerSupplyUse(EntityReference):
     """
     Using a sputter power supply in a deposition process.
     """
+
     reference = Quantity(
         type=SputterPowerSupply,
         a_eln=ELNAnnotation(
@@ -126,25 +99,39 @@ class SputterPowerSupplyUse(EntityReference):
     )
 
 
-class SputterSourceConfiguration(VaporDepositionSourceConfiguration):
+class SputterSource(PVDEvaporationSource):
     """
-    Configuration of devices and consumables for a sputter deposition process.
+    A configuration of a sputter cathode and a power supply
+    that are used as energy source for sputtering.
     """
-    material_source = SubSection(
-        section_def=SputterTargetUse,
-    )
-    energy_source = SubSection(
-        section_def=SputterSourceUse,
+
+    cathode = SubSection(
+        section_def=SputterCathodeUse,
     )
     power_supply = SubSection(
         section_def=SputterPowerSupplyUse,
     )
 
 
-class SputterDepositionStep(PhysicalVaporDepositionStep):
+class SputterSourceConfiguration(PVDSource):
+    """
+    Configuration of devices and consumables
+    for a sputter deposition process.
+    """
+
+    vapor_source = SubSection(
+        section_def=SputterSource,
+    )
+    material_source = SubSection(
+        section_def=SputterTargetUse,
+    )
+
+
+class SputterDepositionStep(PVDStep):
     """
     A step of a sputter deposition process.
     """
+
     sources = SubSection(
         section_def=SputterSourceConfiguration,
         repeats=True,
@@ -161,6 +148,7 @@ class SputterDeposition(PhysicalVaporDeposition):
      - sputtering
      - sputter coating
     """
+
     m_def = Section(
         links=['https://purl.obolibrary.org/obo/CHMO_0001364'],
     )
