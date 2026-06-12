@@ -9,9 +9,9 @@ from nomad.datamodel.metainfo.annotations import (
 )
 from nomad.datamodel.metainfo.basesections import (
     ArchiveSection,
+    CompositeSystem,
     Entity,
     EntityReference,
-    CompositeSystem,
 )
 from nomad.metainfo import MEnum, Quantity, SchemaPackage, Section, SubSection
 from nomad_material_processing.general import (
@@ -41,7 +41,7 @@ sputter_modes = MEnum(
     'Radio Frequency (RF)',
     'Pulsed Direct Current (PDMS)',
     'High Power Impulse (HiPIMS)',
-    'Other'
+    'Other',
 )
 
 
@@ -51,9 +51,7 @@ class SputterTarget(CompositeSystem, ConsumableEntry):
     in a sputter deposition process.
     """
 
-    geometry = SubSection(
-        section_def=Cylinder
-    )
+    geometry = SubSection(section_def=Cylinder)
 
 
 class SputterTargetReference(EntityReference):
@@ -72,12 +70,12 @@ class SputterTargetReference(EntityReference):
 
 class SputterCathodePosition(ArchiveSection):
     """
-    Defines the spatial location and orientation of a sputter cathode 
+    Defines the spatial location and orientation of a sputter cathode
     relative to the substrate holder (origin).
     """
 
     m_def = Section()
-    
+
     x = Quantity(
         type=float,
         description='The lateral offset along the X-axis.',
@@ -94,7 +92,7 @@ class SputterCathodePosition(ArchiveSection):
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.NumberEditQuantity,
             label='Y offset',
-            defaultDisplayUnit='millimeter'
+            defaultDisplayUnit='millimeter',
         ),
         unit='meter',
     )
@@ -128,9 +126,7 @@ class SputterCathode(Entity, DeviceEntry):
     A device which holds a target in a sputter deposition process.
     """
 
-    position = SubSection(
-        section_def=SputterCathodePosition
-    )
+    position = SubSection(section_def=SputterCathodePosition)
 
 
 class SputterCathodeReference(EntityReference):
