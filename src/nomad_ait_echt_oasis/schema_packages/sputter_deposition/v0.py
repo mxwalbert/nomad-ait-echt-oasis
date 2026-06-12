@@ -39,6 +39,7 @@ from nomad_ait_echt_oasis.schema_packages.infrastructure import (
     LIMSConsumableReference,
     LIMSDevice,
     LIMSDeviceReference,
+    LIMSInstrument,
 )
 
 m_package = SchemaPackage(
@@ -340,6 +341,31 @@ class DepositionCategory(EntryDataCategory):
         label='Depositions',
         categories=[EntryDataCategory],
     )
+
+
+class SputterInstrument(LIMSInstrument):
+    """
+    A tool for sputter deposition.
+    """
+
+    cathodes = SubSection(
+        section_def=SputterCathodeReference,
+        repeats=True,
+    )
+    power_supplies = SubSection(
+        section_def=SputterPowerSupplyReference,
+        repeats=True,
+    )
+
+    def normalize(self, archive, logger):
+        super().normalize(archive, logger)
+
+        all_sub_devices = []
+        if self.cathodes:
+            all_sub_devices.extend([ref.reference for ref in self.cathodes])
+        if self.power_supplies:
+            all_sub_devices.extend([ref.reference for ref in self.power_supplies])
+        self.sub_devices = all_sub_devices
 
 
 class SputterDeposition(PhysicalVaporDeposition, EntryData):

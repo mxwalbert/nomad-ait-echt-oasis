@@ -113,7 +113,10 @@ class LIMSInstrument(Instrument, LIMSDevice):
     The instrument can be a standalone device or contain other devices.
     """
 
-    sub_devices = SubSection(section_def=LIMSDeviceReference, repeats=True)
+    sub_devices = SubSection(
+        section_def=LIMSDeviceReference,
+        repeats=True,
+    )
 
 
 class LIMSInstrumentReference(InstrumentReference):
