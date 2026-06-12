@@ -3,6 +3,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
+from nomad.datamodel.data import (
+    Category,
+    EntryData,
+    EntryDataCategory,
+)
 from nomad.datamodel.metainfo.annotations import (
     ELNAnnotation,
     ELNComponentEnum,
@@ -11,7 +16,13 @@ from nomad.datamodel.metainfo.basesections import (
     ArchiveSection,
     CompositeSystem,
 )
-from nomad.metainfo import MEnum, Quantity, SchemaPackage, Section, SubSection
+from nomad.metainfo import (
+    MEnum,
+    Quantity,
+    SchemaPackage,
+    Section,
+    SubSection,
+)
 from nomad_material_processing.general import (
     Cylinder,
     TimeSeries,
@@ -320,7 +331,18 @@ class SputterDepositionStep(PVDStep):
     )
 
 
-class SputterDeposition(PhysicalVaporDeposition):
+class DepositionCategory(EntryDataCategory):
+    """
+    Category for entry schemas related to deposition experiments.
+    """
+
+    m_def = Category(
+        label='Depositions',
+        categories=[EntryDataCategory],
+    )
+
+
+class SputterDeposition(PhysicalVaporDeposition, EntryData):
     """
     A synthesis technique where a solid target is bombarded with electrons or
     energetic ions (e.g. Ar+) causing atoms to be ejected ('sputtering'). The ejected
@@ -333,6 +355,7 @@ class SputterDeposition(PhysicalVaporDeposition):
 
     m_def = Section(
         links=['https://purl.obolibrary.org/obo/CHMO_0001364'],
+        categories=[DepositionCategory],
     )
     steps = SubSection(
         section_def=SputterDepositionStep,

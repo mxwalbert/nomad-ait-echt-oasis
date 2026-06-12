@@ -1,5 +1,6 @@
 from nomad.datamodel.data import (
     Category,
+    EntryData,
     EntryDataCategory,
 )
 from nomad.datamodel.metainfo.annotations import (
@@ -12,12 +13,7 @@ from nomad.datamodel.metainfo.basesections.v1 import (
     Instrument,
     InstrumentReference,
 )
-from nomad.metainfo import (
-    Quantity,
-    SchemaPackage,
-    Section,
-    SubSection,
-)
+from nomad.metainfo import Quantity, SchemaPackage, Section, SubSection
 from nomad.metainfo.data_type import (
     Datetime,
 )
@@ -40,7 +36,7 @@ class LIMSDeviceCategory(EntryDataCategory):
     )
 
 
-class LIMSDevice(Entity):
+class LIMSDevice(Entity, EntryData):
     """
     A device that is registered in the laboratory inventory management.
     """
@@ -146,7 +142,7 @@ class LIMSConsumableCategory(EntryDataCategory):
     )
 
 
-class LIMSConsumable(Entity):
+class LIMSConsumable(Entity, EntryData):
     """
     A consumable that is registered in the laboratory inventory management.
     """
