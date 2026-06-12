@@ -272,11 +272,9 @@ class SputterSource(PVDEvaporationSource):
     duty_cycle = Quantity(
         type=float,
         shape=[],
-        unit='percent',
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.NumberEditQuantity,
             label='Duty cycle',
-            defaultDisplayUnit='percent',
         ),
     )
     reverse_voltage = Quantity(
