@@ -10,8 +10,6 @@ from nomad.datamodel.metainfo.annotations import (
 from nomad.datamodel.metainfo.basesections import (
     ArchiveSection,
     CompositeSystem,
-    Entity,
-    EntityReference,
 )
 from nomad.metainfo import MEnum, Quantity, SchemaPackage, Section, SubSection
 from nomad_material_processing.general import (
@@ -26,8 +24,10 @@ from nomad_material_processing.vapor_deposition.pvd.general import (
 )
 
 from nomad_ait_echt_oasis.schema_packages.infrastructure import (
-    ConsumableEntry,
-    DeviceEntry,
+    LIMSConsumable,
+    LIMSConsumableReference,
+    LIMSDevice,
+    LIMSDeviceReference,
 )
 
 m_package = SchemaPackage(
@@ -45,7 +45,7 @@ sputter_modes = MEnum(
 )
 
 
-class SputterTarget(CompositeSystem, ConsumableEntry):
+class SputterTarget(CompositeSystem, LIMSConsumable):
     """
     A consumable which is used as source of material
     in a sputter deposition process.
@@ -54,7 +54,7 @@ class SputterTarget(CompositeSystem, ConsumableEntry):
     geometry = SubSection(section_def=Cylinder)
 
 
-class SputterTargetReference(EntityReference):
+class SputterTargetReference(LIMSConsumableReference):
     """
     Reference to a sputter target for a deposition process.
     """
@@ -121,7 +121,7 @@ class SputterCathodePosition(ArchiveSection):
         super().normalize(archive, logger)
 
 
-class SputterCathode(Entity, DeviceEntry):
+class SputterCathode(LIMSDevice):
     """
     A device which holds a target in a sputter deposition process.
     """
@@ -129,7 +129,7 @@ class SputterCathode(Entity, DeviceEntry):
     position = SubSection(section_def=SputterCathodePosition)
 
 
-class SputterCathodeReference(EntityReference):
+class SputterCathodeReference(LIMSDeviceReference):
     """
     Reference to a sputter cathode for a deposition process.
     """
@@ -143,7 +143,7 @@ class SputterCathodeReference(EntityReference):
     )
 
 
-class SputterPowerSupply(Entity, DeviceEntry):
+class SputterPowerSupply(LIMSDevice):
     """
     A device which supplies power to a source
     in a sputter deposition process.
@@ -159,7 +159,7 @@ class SputterPowerSupply(Entity, DeviceEntry):
     )
 
 
-class SputterPowerSupplyReference(EntityReference):
+class SputterPowerSupplyReference(LIMSDeviceReference):
     """
     Reference to a sputter power supply for a deposition process.
     """

@@ -6,64 +6,74 @@ This `nomad` plugin was generated with `Cookiecutter` along with `@nomad`'s [`co
 
 ## Development
 
-If you want to develop locally this plugin, clone the project and in the plugin folder, create a virtual environment (you can use Python 3.10, 3.11 or 3.12):
-```sh
-git clone https://github.com/mxwalbert/ait-echt-oasis.git
-cd ait-echt-oasis
-python3.11 -m venv .pyenv
-. .pyenv/bin/activate
-```
+We use [uv](https://astral.sh) to manage our development environment, dependencies, and tools. Ensure you have `uv` installed on your system before proceeding:
 
-Make sure to have `pip` upgraded:
-```sh
-python -m pip install --upgrade pip
-```
-
-We recommend installing `uv` for fast pip installation of the packages:
 ```sh
 pip install uv
 ```
 
-Install the `nomad-lab` package:
+To set up your local development environment, clone the project and navigate into the plugin folder:
 ```sh
-uv pip install -e '.[dev]'
+git clone https://github.com/mxwalbert/ait-echt-oasis.git
+cd ait-echt-oasis
+```
+
+You do **not** need to manually create or activate a virtual environment. `uv run` will automatically manage a virtual environment in the background and ensure all dependencies are perfectly synced.
+
+To load the environment with the dev dependencies you can use:
+```sh
+uv sync --extra dev
+```
+
+### Pre-commit hooks
+
+To ensure that all commits are fully compliant with our formatting, linting, testing, and versioning rules, we use a mandatory pre-commit pipeline. 
+
+Install the pre-commit hooks into your Git configuration:
+```sh
+uv run pre-commit install
+```
+This will automatically run Ruff (linting and formatting), Pytest, and verify that the plugin version in `pyproject.toml` is bumped relative to the `main` branch before any commit can be created.
+
+### Run linting and auto-formatting
+
+We use [Ruff](https://docs.astral.sh/ruff/) for linting and formatting the code. You can run Ruff directly through `uv` without manual installation steps:
+```sh
+uv run ruff check .
+uv run ruff format . --check
 ```
 
 ### Run the tests
 
-You can run locally the tests:
+You can run the tests locally. `uv` will automatically ensure your package is installed in editable mode alongside all `dev` dependencies:
 ```sh
-python -m pytest -sv tests
+uv run pytest -sv tests
 ```
 
 where the `-s` and `-v` options toggle the output verbosity.
 
-Our CI/CD pipeline produces a more comprehensive test report using the `pytest-cov` package. You can generate a local coverage report:
+Our CI/CD pipeline produces a more comprehensive test report using the `pytest-cov` package. You can generate a local coverage report by injecting it into the runtime environment:
 ```sh
-uv pip install pytest-cov
-python -m pytest --cov=src tests
-```
-
-### Run linting and auto-formatting
-
-We use [Ruff](https://docs.astral.sh/ruff/) for linting and formatting the code. Ruff auto-formatting is also a part of the GitHub workflow actions. You can run locally:
-```sh
-ruff check .
-ruff format . --check
+uv run --with pytest-cov pytest --cov=src tests
 ```
 
 ### Debugging
 
-For interactive debugging of the tests, use `pytest` with the `--pdb` flag. We recommend using an IDE for debugging, e.g., _VSCode_. If that is the case, add the following snippet to your `.vscode/launch.json`:
+For interactive debugging of the tests, use `pytest` with the `--pdb` flag:
+```sh
+uv run pytest -sv --pdb tests
+```
+
+We recommend using an IDE for debugging, e.g., _VSCode_. If that is the case, add the following snippet to your `.vscode/launch.json` to make sure it points to the `uv` managed virtual environment:
 ```json
 {
   "configurations": [
       {
-        "name": "<descriptive tag>",
+        "name": "Debug Pytest via uv",
         "type": "debugpy",
         "request": "launch",
-        "cwd": "${workspaceFolder}",
-        "program": "${workspaceFolder}/.pyenv/bin/pytest",
+        "cwd": "\${workspaceFolder}",
+        "program": "\${workspaceFolder}/.venv/bin/pytest",
         "justMyCode": true,
         "env": {
             "_PYTEST_RAISE": "1"
@@ -71,7 +81,7 @@ For interactive debugging of the tests, use `pytest` with the `--pdb` flag. We r
         "args": [
             "-sv",
             "--pdb",
-            "<path-to-plugin-tests>",
+            "<path-to-plugin-tests>"
         ]
     }
   ]
@@ -84,14 +94,9 @@ The settings configuration file `.vscode/settings.json` automatically applies th
 
 ### Documentation on Github pages
 
-To view the documentation locally, install the related packages using:
+To view the documentation locally, use `uv run` to install and serve `mkdocs` from the definitions file:
 ```sh
-uv pip install -r requirements_docs.txt
-```
-
-Run the documentation server:
-```sh
-mkdocs serve
+uv run --with-requirements requirements_docs.txt mkdocs serve
 ```
 
 ## Adding this plugin to NOMAD
@@ -110,9 +115,14 @@ We now recommend using the dedicated [`nomad-distro-dev`](https://github.com/FAI
 
 ### Template update
 
-We use [`cruft`](https://github.com/cruft/cruft) to update the project based on template changes. To run the check for updates locally, run `cruft update` in the root of the project. More details see the instructions on [`cruft` website](https://cruft.github.io/cruft/#updating-a-project).
+We use [`cruft`](https://github.com/cruft/cruft) to update the project based on template changes. To run the check for updates locally, run:
+```sh
+uv run cruft update
+```
+More details see the instructions on [`cruft` website](https://cruft.github.io/cruft/#updating-a-project).
 
 ## Main contributors
+
 | Name | E-mail     |
 |------|------------|
-| Maximilian Wolf | [maximilian.wolf@ait.ac.at](mailto:maximilian.wolf@ait.ac.at)
+| Maximilian Wolf | [maximilian.wolf@ait.ac.at](mailto:maximilian.wolf@ait.ac.at) |

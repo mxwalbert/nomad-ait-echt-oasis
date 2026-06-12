@@ -14,7 +14,7 @@ classifiers = [
 ]
 name = "nomad-ait-echt-oasis"
 description = "A NOMAD plugin containing schemas, parsers, etc. for material processing and analysis methods at the ECHT group of AIT."
-version = "0.3.2"
+version = "0.3.3"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -35,7 +35,7 @@ dependencies = [
 Repository = "https://github.com/mxwalbert/ait-echt-oasis"
 
 [project.optional-dependencies]
-dev = ["ruff", "pytest", "structlog"]
+dev = ["ruff", "pytest", "structlog", "pre-commit", "packaging"]
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.

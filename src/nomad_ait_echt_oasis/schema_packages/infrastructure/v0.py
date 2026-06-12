@@ -1,13 +1,23 @@
 from nomad.datamodel.data import (
     Category,
-    EntryData,
     EntryDataCategory,
 )
 from nomad.datamodel.metainfo.annotations import (
     ELNAnnotation,
     ELNComponentEnum,
 )
-from nomad.metainfo import Quantity, SchemaPackage, Section
+from nomad.datamodel.metainfo.basesections.v1 import (
+    Entity,
+    EntityReference,
+    Instrument,
+    InstrumentReference,
+)
+from nomad.metainfo import (
+    Quantity,
+    SchemaPackage,
+    Section,
+    SubSection,
+)
 from nomad.metainfo.data_type import (
     Datetime,
 )
@@ -21,7 +31,7 @@ m_package = SchemaPackage(
 class LIMSDeviceCategory(EntryDataCategory):
     """
     Category for entry schemas related to devices
-    for aboratory inventory management.
+    for laboratory inventory management.
     """
 
     m_def = Category(
@@ -30,9 +40,9 @@ class LIMSDeviceCategory(EntryDataCategory):
     )
 
 
-class DeviceEntry(EntryData):
+class LIMSDevice(Entity):
     """
-    Adds reoccurring quantities to a top-level section that describes a device.
+    A device that is registered in the laboratory inventory management.
     """
 
     m_def = Section(
@@ -83,14 +93,51 @@ class DeviceEntry(EntryData):
     def normalize(self, archive, logger) -> None:
         super().normalize(archive, logger)
 
-        if self.device_type is None:
+        if type(self) is not LIMSDevice:
             self.device_type = self.__class__.__name__
 
 
-class LIMSDConsumableCategory(EntryDataCategory):
+class LIMSDeviceReference(EntityReference):
+    """
+    Reference to a device in the laboratory inventory management.
+    """
+
+    reference = Quantity(
+        type=LIMSDevice,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.ReferenceEditQuantity,
+            label='LIMSDevice reference',
+        ),
+    )
+
+
+class LIMSInstrument(Instrument, LIMSDevice):
+    """
+    An instrument that is registered in the laboratory inventory management.
+    The instrument can be a standalone device or contain other devices.
+    """
+
+    sub_devices = SubSection(section_def=LIMSDeviceReference, repeats=True)
+
+
+class LIMSInstrumentReference(InstrumentReference):
+    """
+    Reference to an instrument in the laboratory inventory management.
+    """
+
+    reference = Quantity(
+        type=LIMSInstrument,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.ReferenceEditQuantity,
+            label='LIMSInstrument reference',
+        ),
+    )
+
+
+class LIMSConsumableCategory(EntryDataCategory):
     """
     Category for entry schemas related to consumables
-    for aboratory inventory management.
+    for laboratory inventory management.
     """
 
     m_def = Category(
@@ -99,13 +146,13 @@ class LIMSDConsumableCategory(EntryDataCategory):
     )
 
 
-class ConsumableEntry(EntryData):
+class LIMSConsumable(Entity):
     """
-    Adds reoccurring quantities to a top-level section that describes a consumable.
+    A consumable that is registered in the laboratory inventory management.
     """
 
     m_def = Section(
-        categories=[LIMSDConsumableCategory],
+        categories=[LIMSConsumableCategory],
     )
 
     vendor = Quantity(
@@ -140,8 +187,22 @@ class ConsumableEntry(EntryData):
     def normalize(self, archive, logger) -> None:
         super().normalize(archive, logger)
 
-        if self.item_type is None:
+        if type(self) is not LIMSConsumable:
             self.item_type = self.__class__.__name__
+
+
+class LIMSConsumableReference(EntityReference):
+    """
+    Reference to a consumable in the laboratory inventory management.
+    """
+
+    reference = Quantity(
+        type=LIMSConsumable,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.ReferenceEditQuantity,
+            label='LIMSConsumable reference',
+        ),
+    )
 
 
 m_package.__init_metainfo__()
