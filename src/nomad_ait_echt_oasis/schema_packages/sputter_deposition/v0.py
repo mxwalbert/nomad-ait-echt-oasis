@@ -3,12 +3,21 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
-from nomad.datamodel.metainfo.annotations import ELNAnnotation
+from nomad.datamodel.metainfo.annotations import (
+    ELNAnnotation,
+    ELNComponentEnum,
+)
 from nomad.datamodel.metainfo.basesections import (
+    ArchiveSection,
     Entity,
     EntityReference,
+    CompositeSystem,
 )
 from nomad.metainfo import MEnum, Quantity, SchemaPackage, Section, SubSection
+from nomad_material_processing.general import (
+    Cylinder,
+    TimeSeries,
+)
 from nomad_material_processing.vapor_deposition.pvd.general import (
     PhysicalVaporDeposition,
     PVDEvaporationSource,
@@ -27,25 +36,91 @@ m_package = SchemaPackage(
 )
 
 
-class SputterTarget(Entity, ConsumableEntry):
+sputter_modes = MEnum(
+    'Direct Current (DC)',
+    'Radio Frequency (RF)',
+    'Pulsed Direct Current (PDMS)',
+    'High Power Impulse (HiPIMS)',
+    'Other'
+)
+
+
+class SputterTarget(CompositeSystem, ConsumableEntry):
     """
     A consumable which is used as source of material
     in a sputter deposition process.
     """
 
+    geometry = SubSection(
+        section_def=Cylinder
+    )
 
-class SputterTargetUse(EntityReference):
+
+class SputterTargetReference(EntityReference):
     """
-    Using a sputter target in a deposition process.
+    Reference to a sputter target for a deposition process.
     """
 
     reference = Quantity(
         type=SputterTarget,
         a_eln=ELNAnnotation(
-            component='ReferenceEditQuantity',
-            label='sputter target reference',
+            component=ELNComponentEnum.ReferenceEditQuantity,
+            label='SputterTarget reference',
         ),
     )
+
+
+class SputterCathodePosition(ArchiveSection):
+    """
+    Defines the spatial location and orientation of a sputter cathode 
+    relative to the substrate holder (origin).
+    """
+
+    m_def = Section()
+    
+    x = Quantity(
+        type=float,
+        description='The lateral offset along the X-axis.',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            label='X offset',
+            defaultDisplayUnit='millimeter',
+        ),
+        unit='meter',
+    )
+    y = Quantity(
+        type=float,
+        description='The lateral offset along the Y-axis.',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            label='Y offset',
+            defaultDisplayUnit='millimeter'
+        ),
+        unit='meter',
+    )
+    distance_z = Quantity(
+        type=float,
+        description='The vertical distance along the Z-axis.',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            label='Z distance',
+            defaultDisplayUnit='millimeter',
+        ),
+        unit='meter',
+    )
+    tilt_angle = Quantity(
+        type=float,
+        description='The tilt angle of the cathode relative to the Z-axis.',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            label='Tilt angle',
+            defaultDisplayUnit='degree',
+        ),
+        unit='degree',
+    )
+
+    def normalize(self, archive, logger):
+        super().normalize(archive, logger)
 
 
 class SputterCathode(Entity, DeviceEntry):
@@ -53,17 +128,21 @@ class SputterCathode(Entity, DeviceEntry):
     A device which holds a target in a sputter deposition process.
     """
 
+    position = SubSection(
+        section_def=SputterCathodePosition
+    )
 
-class SputterCathodeUse(EntityReference):
+
+class SputterCathodeReference(EntityReference):
     """
-    Using a sputter cathode in a deposition process.
+    Reference to a sputter cathode for a deposition process.
     """
 
     reference = Quantity(
         type=SputterCathode,
         a_eln=ELNAnnotation(
-            component='ReferenceEditQuantity',
-            label='sputter cathode reference',
+            component=ELNComponentEnum.ReferenceEditQuantity,
+            label='SputterCathode reference',
         ),
     )
 
@@ -75,26 +154,81 @@ class SputterPowerSupply(Entity, DeviceEntry):
     """
 
     supported_modes = Quantity(
-        type=MEnum(
-            'direct current',
-            'radio frequency',
-            'pulsed direct current',
-            'high power impuls',
-        ),
+        type=sputter_modes,
         shape=['*'],
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.EnumEditQuantity,
+            label='Supported sputter modes',
+        ),
     )
 
 
-class SputterPowerSupplyUse(EntityReference):
+class SputterPowerSupplyReference(EntityReference):
     """
-    Using a sputter power supply in a deposition process.
+    Reference to a sputter power supply for a deposition process.
     """
 
     reference = Quantity(
         type=SputterPowerSupply,
         a_eln=ELNAnnotation(
-            component='ReferenceEditQuantity',
-            label='sputter power supply reference',
+            component=ELNComponentEnum.ReferenceEditQuantity,
+            label='SputterPowerSupply reference',
+        ),
+    )
+
+
+class PowerSupplyCurrent(TimeSeries):
+    """
+    The current supplied by the power supply (ampere).
+    """
+
+    m_def = Section(
+        a_plot=dict(
+            x='time',
+            y='value',
+        ),
+    )
+    value = Quantity(
+        type=float,
+        shape=['*'],
+        unit='ampere',
+    )
+    set_value = Quantity(
+        type=float,
+        shape=['*'],
+        unit='ampere',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            label='Set value',
+            defaultDisplayUnit='ampere',
+        ),
+    )
+
+
+class PowerSupplyVoltage(TimeSeries):
+    """
+    The voltage supplied by the power supply (volt).
+    """
+
+    m_def = Section(
+        a_plot=dict(
+            x='time',
+            y='value',
+        ),
+    )
+    value = Quantity(
+        type=float,
+        shape=['*'],
+        unit='volt',
+    )
+    set_value = Quantity(
+        type=float,
+        shape=['*'],
+        unit='volt',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            label='Set value',
+            defaultDisplayUnit='volt',
         ),
     )
 
@@ -106,10 +240,64 @@ class SputterSource(PVDEvaporationSource):
     """
 
     cathode = SubSection(
-        section_def=SputterCathodeUse,
+        section_def=SputterCathodeReference,
     )
     power_supply = SubSection(
-        section_def=SputterPowerSupplyUse,
+        section_def=SputterPowerSupplyReference,
+    )
+    mode = Quantity(
+        type=sputter_modes,
+        shape=[],
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.EnumEditQuantity,
+            label='Sputter mode',
+        ),
+    )
+    voltage = SubSection(
+        section_def=PowerSupplyVoltage,
+    )
+    current = SubSection(
+        section_def=PowerSupplyCurrent,
+    )
+    frequency = Quantity(
+        type=float,
+        shape=[],
+        unit='hertz',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            label='Frequency',
+            defaultDisplayUnit='hertz',
+        ),
+    )
+    duty_cycle = Quantity(
+        type=float,
+        shape=[],
+        unit='percent',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            label='Duty cycle',
+            defaultDisplayUnit='percent',
+        ),
+    )
+    reverse_voltage = Quantity(
+        type=float,
+        shape=[],
+        unit='volt',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            label='Reverse voltage',
+            defaultDisplayUnit='volt',
+        ),
+    )
+    pulse_width = Quantity(
+        type=float,
+        shape=[],
+        unit='second',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            label='Pulse width',
+            defaultDisplayUnit='microsecond',
+        ),
     )
 
 
@@ -119,11 +307,11 @@ class SputterSourceConfiguration(PVDSource):
     for a sputter deposition process.
     """
 
+    material = SubSection(
+        section_def=SputterTargetReference,
+    )
     vapor_source = SubSection(
         section_def=SputterSource,
-    )
-    material_source = SubSection(
-        section_def=SputterTargetUse,
     )
 
 
