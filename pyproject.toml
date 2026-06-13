@@ -14,7 +14,7 @@ classifiers = [
 ]
 name = "nomad-ait-echt-oasis"
 description = "A NOMAD plugin containing schemas, parsers, etc. for material processing and analysis methods at the ECHT group of AIT."
-version = "0.3.5"
+version = "0.3.6"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -61,6 +61,7 @@ exclude = [
     "dist",
     "node_modules",
     "venv",
+    "tests",
 ]
 
 # Same as Black.

@@ -89,7 +89,7 @@ class LIMSDevice(Entity, EntryData):
     def normalize(self, archive, logger) -> None:
         super().normalize(archive, logger)
 
-        if type(self) is not LIMSDevice:
+        if self.device_type is None or type(self) is not LIMSDevice:
             self.device_type = self.__class__.__name__
 
 
@@ -186,7 +186,7 @@ class LIMSConsumable(Entity, EntryData):
     def normalize(self, archive, logger) -> None:
         super().normalize(archive, logger)
 
-        if type(self) is not LIMSConsumable:
+        if self.item_type is None or type(self) is not LIMSConsumable:
             self.item_type = self.__class__.__name__
 
 

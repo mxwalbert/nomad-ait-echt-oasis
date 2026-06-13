@@ -48,7 +48,7 @@ m_package = SchemaPackage(
 )
 
 
-sputter_modes = MEnum(
+sputter_mode_values = (
     'Direct Current (DC)',
     'Radio Frequency (RF)',
     'Pulsed Direct Current (PDMS)',
@@ -129,9 +129,6 @@ class SputterCathodePosition(ArchiveSection):
         unit='degree',
     )
 
-    def normalize(self, archive, logger):
-        super().normalize(archive, logger)
-
 
 class SputterCathode(LIMSDevice):
     """
@@ -162,7 +159,7 @@ class SputterPowerSupply(LIMSDevice):
     """
 
     supported_modes = Quantity(
-        type=sputter_modes,
+        type=MEnum(*sputter_mode_values),
         shape=['*'],
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.EnumEditQuantity,
@@ -254,7 +251,7 @@ class SputterSource(PVDEvaporationSource):
         section_def=SputterPowerSupplyReference,
     )
     mode = Quantity(
-        type=sputter_modes,
+        type=MEnum(*sputter_mode_values),
         shape=[],
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.EnumEditQuantity,
@@ -360,12 +357,27 @@ class SputterInstrument(LIMSInstrument):
     def normalize(self, archive, logger):
         super().normalize(archive, logger)
 
-        all_sub_devices = []
+        all_sub_devices = set()
         if self.cathodes:
-            all_sub_devices.extend([ref.reference for ref in self.cathodes])
+            all_sub_devices.update(self.cathodes)
         if self.power_supplies:
-            all_sub_devices.extend([ref.reference for ref in self.power_supplies])
-        self.sub_devices = all_sub_devices
+            all_sub_devices.update(self.power_supplies)
+        if self.sub_devices:
+            all_sub_devices.update(self.sub_devices)
+        new_cathodes, new_power_supplies, new_sub_devices = [], [], []
+        for ref in all_sub_devices:
+            if isinstance(ref, SputterCathodeReference):
+                new_cathodes.append(ref)
+            elif isinstance(ref, SputterPowerSupplyReference):
+                new_power_supplies.append(ref)
+            else:
+                new_sub_devices.append(ref)
+        if new_cathodes:
+            self.cathodes = new_cathodes
+        if new_power_supplies:
+            self.power_supplies = new_power_supplies
+        if new_sub_devices:
+            self.sub_devices = new_sub_devices
 
 
 class SputterDeposition(PhysicalVaporDeposition, EntryData):
