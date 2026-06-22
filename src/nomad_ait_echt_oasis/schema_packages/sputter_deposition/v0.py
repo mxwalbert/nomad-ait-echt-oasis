@@ -27,9 +27,13 @@ from nomad_material_processing.general import (
     Cylinder,
     TimeSeries,
 )
+from nomad_material_processing.vapor_deposition.general import (
+    SubstrateHolder,
+)
 from nomad_material_processing.vapor_deposition.pvd.general import (
     PhysicalVaporDeposition,
     PVDEvaporationSource,
+    PVDSampleParameters,
     PVDSource,
     PVDStep,
 )
@@ -318,6 +322,100 @@ class SputterSourceConfiguration(PVDSource):
     )
 
 
+class SamplePosition(ArchiveSection):
+    """
+    Position of a sample on a substrate holder.
+    """
+
+    x_coordinate = Quantity(
+        type=float,
+        unit='meter',
+        description="""
+        The x coordinate of the sample position center
+        relative to the center of the substrate holder.
+        """,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            label='x coordinate',
+            defaultDisplayUnit='millimeter',
+        ),
+    )
+    y_coordinate = Quantity(
+        type=float,
+        unit='meter',
+        description="""
+        The y coordinate of the sample position center
+        relative to the center of the substrate holder.
+        """,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            label='y coordinate',
+            defaultDisplayUnit='millimeter',
+        ),
+    )
+    name = Quantity(
+        type=str,
+        description="""
+        The short name for the sample position.
+        This name is matched with the positions of the substrate holder.
+        If no name is provided, it is inferred from the x and y coordinates.
+        """,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.StringEditQuantity,
+            label='SubstrateHolderPosition name',
+        ),
+    )
+
+    def normalize(self, archive, logger):
+        super().normalize(archive, logger)
+
+        if self.name is None:
+            x = f'{self.x_coordinate.to("millimeter").magnitude:.2f}'
+            y = f'{self.y_coordinate.to("millimeter").magnitude:.2f}'
+            self.name = f'{x},{y}'
+
+
+class SputterSampleParameters(PVDSampleParameters):
+    """
+    Parameters for a sample in a sputter deposition process.
+    """
+
+    position = SubSection(
+        section_def=SamplePosition,
+    )
+
+
+class SputterSubstrateHolder(SubstrateHolder, LIMSDevice):
+    """
+    A holder for substrates in a sputter deposition process.
+    """
+
+
+class SputterSubstrateHolderReference(LIMSDeviceReference):
+    """
+    Reference to a substrate holder in a sputter deposition process.
+    """
+
+    reference = Quantity(
+        type=SputterSubstrateHolder,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.ReferenceEditQuantity,
+            label='SputterSubstrateHolder reference',
+        ),
+    )
+    rotation_speed = Quantity(
+        type=float,
+        shape=[],
+        unit='rpm',
+        default=0.0,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            label='Rotation speed',
+            defaultDisplayUnit='rpm',
+        ),
+    )
+
+
 class SputterDepositionStep(PVDStep):
     """
     A step of a sputter deposition process.
@@ -327,6 +425,27 @@ class SputterDepositionStep(PVDStep):
         section_def=SputterSourceConfiguration,
         repeats=True,
     )
+    sample_parameters = SubSection(
+        section_def=SputterSampleParameters,
+        repeats=True,
+    )
+    substrate_holder = SubSection(
+        section_def=SputterSubstrateHolderReference,
+    )
+
+    def normalize(self, archive, logger):
+        super().normalize(archive, logger)
+
+        if self.sample_parameters:
+            for sp in self.sample_parameters:
+                pos = sp.position
+                pos.normalize(archive, logger)
+                substrate_holder = self.substrate_holder.reference
+                if substrate_holder is None or substrate_holder.positions is None:
+                    continue
+                if pos.name in [p.name for p in substrate_holder.positions]:
+                    pos.x_coordinate = substrate_holder.positions[pos.name].x_position
+                    pos.y_coordinate = substrate_holder.positions[pos.name].y_position
 
 
 class DepositionCategory(EntryDataCategory):
