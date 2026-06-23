@@ -28,6 +28,7 @@ from nomad_material_processing.general import (
     TimeSeries,
 )
 from nomad_material_processing.vapor_deposition.general import (
+    ChamberEnvironment,
     SubstrateHolder,
 )
 from nomad_material_processing.vapor_deposition.pvd.general import (
@@ -86,13 +87,14 @@ class SputterTargetReference(LIMSConsumableReference):
 
 class SputterCathodePosition(ArchiveSection):
     """
-    Defines the spatial location and orientation of a sputter cathode
-    relative to the substrate holder (origin).
+    Defines the spatial location and orientation of a sputter cathode,
+    i.e., the target surface, relative to the center of the substrate
+    holder (origin).
     """
 
     m_def = Section()
 
-    x = Quantity(
+    x_offset = Quantity(
         type=float,
         description='The lateral offset along the X-axis.',
         a_eln=ELNAnnotation(
@@ -102,7 +104,7 @@ class SputterCathodePosition(ArchiveSection):
         ),
         unit='meter',
     )
-    y = Quantity(
+    y_offset = Quantity(
         type=float,
         description='The lateral offset along the Y-axis.',
         a_eln=ELNAnnotation(
@@ -112,19 +114,19 @@ class SputterCathodePosition(ArchiveSection):
         ),
         unit='meter',
     )
-    distance_z = Quantity(
+    z_offset = Quantity(
         type=float,
-        description='The vertical distance along the Z-axis.',
+        description='The vertical offset along the Z-axis.',
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.NumberEditQuantity,
-            label='Z distance',
+            label='Z offset',
             defaultDisplayUnit='millimeter',
         ),
         unit='meter',
     )
     tilt_angle = Quantity(
         type=float,
-        description='The tilt angle of the cathode relative to the Z-axis.',
+        description='The tilt angle of the cathode relative to the XY-plane.',
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.NumberEditQuantity,
             label='Tilt angle',
@@ -168,20 +170,6 @@ class SputterPowerSupply(LIMSDevice):
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.EnumEditQuantity,
             label='Supported sputter modes',
-        ),
-    )
-
-
-class SputterPowerSupplyReference(LIMSDeviceReference):
-    """
-    Reference to a sputter power supply for a deposition process.
-    """
-
-    reference = Quantity(
-        type=SputterPowerSupply,
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.ReferenceEditQuantity,
-            label='SputterPowerSupply reference',
         ),
     )
 
@@ -242,6 +230,117 @@ class PowerSupplyVoltage(TimeSeries):
     )
 
 
+class PowerSupplyPower(TimeSeries):
+    """
+    The power supplied by the power supply (watt).
+    """
+
+    m_def = Section(
+        a_plot=dict(
+            x='time',
+            y='value',
+        ),
+    )
+    value = Quantity(
+        type=float,
+        shape=['*'],
+        unit='watt',
+    )
+    set_value = Quantity(
+        type=float,
+        shape=['*'],
+        unit='watt',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            label='Set value',
+            defaultDisplayUnit='watt',
+        ),
+    )
+
+
+class SputterPowerSupplyReference(LIMSDeviceReference):
+    """
+    Reference to a sputter power supply for a deposition process.
+    """
+
+    reference = Quantity(
+        type=SputterPowerSupply,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.ReferenceEditQuantity,
+            label='SputterPowerSupply reference',
+        ),
+    )
+    mode = Quantity(
+        type=MEnum(*sputter_mode_values),
+        shape=[],
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.EnumEditQuantity,
+            label='Sputter mode',
+        ),
+    )
+    power = SubSection(
+        section_def=PowerSupplyPower,
+    )
+
+    def normalize(self, archive, logger):
+        super().normalize(archive, logger)
+
+        if self.mode and self.reference and self.reference.supported_modes:
+            if self.mode not in self.reference.supported_modes:
+                if logger:
+                    logger.warning(
+                        'Specified sputter mode not supported by power supply'
+                    )
+
+
+class DCSputterPowerSupplyReference(SputterPowerSupplyReference):
+    """
+    Configuration of a DC power supply for a sputter deposition process.
+    """
+
+    mode = 'Direct Current (DC)'
+    voltage = SubSection(
+        section_def=PowerSupplyVoltage,
+    )
+    current = SubSection(
+        section_def=PowerSupplyCurrent,
+    )
+
+    def normalize(self, archive, logger):
+        super().normalize(archive, logger)
+
+        if self.m_xpath('power.value') is None:
+            if (
+                self.m_xpath('voltage.value') is not None
+                and self.m_xpath('current.value') is not None
+            ):
+                self.power.value = self.voltage.value * self.current.value
+
+
+class RFSputterPowerSupplyReference(SputterPowerSupplyReference):
+    """
+    Configuration of an RF power supply for a sputter deposition process.
+    """
+
+    mode = 'Radio Frequency (RF)'
+    forward_power = SubSection(
+        section_def=PowerSupplyPower,
+    )
+    reflected_power = SubSection(
+        section_def=PowerSupplyPower,
+    )
+
+    def normalize(self, archive, logger):
+        super().normalize(archive, logger)
+
+        if self.m_xpath('power.value') is None:
+            if (
+                self.m_xpath('forward_power.value') is not None
+                and self.m_xpath('reflected_power.value') is not None
+            ):
+                self.power.value = self.forward_power.value - self.reflected_power.value
+
+
 class SputterSource(PVDEvaporationSource):
     """
     A configuration of a sputter cathode and a power supply
@@ -254,58 +353,13 @@ class SputterSource(PVDEvaporationSource):
     power_supply = SubSection(
         section_def=SputterPowerSupplyReference,
     )
-    mode = Quantity(
-        type=MEnum(*sputter_mode_values),
-        shape=[],
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.EnumEditQuantity,
-            label='Sputter mode',
-        ),
-    )
-    voltage = SubSection(
-        section_def=PowerSupplyVoltage,
-    )
-    current = SubSection(
-        section_def=PowerSupplyCurrent,
-    )
-    frequency = Quantity(
-        type=float,
-        shape=[],
-        unit='hertz',
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            label='Frequency',
-            defaultDisplayUnit='hertz',
-        ),
-    )
-    duty_cycle = Quantity(
-        type=float,
-        shape=[],
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            label='Duty cycle',
-        ),
-    )
-    reverse_voltage = Quantity(
-        type=float,
-        shape=[],
-        unit='volt',
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            label='Reverse voltage',
-            defaultDisplayUnit='volt',
-        ),
-    )
-    pulse_width = Quantity(
-        type=float,
-        shape=[],
-        unit='second',
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            label='Pulse width',
-            defaultDisplayUnit='microsecond',
-        ),
-    )
+
+    def normalize(self, archive, logger):
+        super().normalize(archive, logger)
+
+        if self.m_xpath('power.value') is None:
+            if self.m_xpath('power_supply.power.value') is not None:
+                self.power.value = self.power_supply.power.value
 
 
 class SputterSourceConfiguration(PVDSource):
@@ -326,6 +380,8 @@ class SamplePosition(ArchiveSection):
     """
     Position of a sample on a substrate holder.
     """
+
+    m_def = Section()
 
     x_coordinate = Quantity(
         type=float,
@@ -357,8 +413,9 @@ class SamplePosition(ArchiveSection):
         type=str,
         description="""
         The short name for the sample position.
-        This name is matched with the positions of the substrate holder.
-        If no name is provided, it is inferred from the x and y coordinates.
+        This name is matched with the positions 
+        of the substrate holder. If no name is provided, 
+        it is inferred from the x and y coordinates.
         """,
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.StringEditQuantity,
@@ -416,6 +473,12 @@ class SputterSubstrateHolderReference(LIMSDeviceReference):
     )
 
 
+class SputterChamberEnvironment(ChamberEnvironment):
+    """
+    The conditions inside the chamber during a sputter deposition process.
+    """
+
+
 class SputterDepositionStep(PVDStep):
     """
     A step of a sputter deposition process.
@@ -431,6 +494,9 @@ class SputterDepositionStep(PVDStep):
     )
     substrate_holder = SubSection(
         section_def=SputterSubstrateHolderReference,
+    )
+    environment = SubSection(
+        section_def=SputterChamberEnvironment,
     )
 
     def normalize(self, archive, logger):

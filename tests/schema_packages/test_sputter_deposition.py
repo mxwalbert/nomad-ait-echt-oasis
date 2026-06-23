@@ -1,4 +1,5 @@
 from nomad_material_processing.vapor_deposition.general import SubstrateHolderPosition
+from nomad_material_processing.vapor_deposition.pvd.general import SourcePower
 from nomad_ait_echt_oasis.schema_packages.infrastructure import LIMSDeviceReference
 from nomad_ait_echt_oasis.schema_packages.sputter_deposition.v0 import (
     SputterCathodeReference,
@@ -14,6 +15,11 @@ from nomad_ait_echt_oasis.schema_packages.sputter_deposition.v0 import (
     SputterSampleParameters,
     SputterSubstrateHolder,
     SputterSubstrateHolderReference,
+    DCSputterPowerSupplyReference,
+    RFSputterPowerSupplyReference,
+    PowerSupplyVoltage,
+    PowerSupplyCurrent,
+    PowerSupplyPower,
 )
 
 
@@ -143,3 +149,58 @@ def test_sputter_deposition_step_normalize(archive):
     
     assert sample_pos.x_coordinate.magnitude == 0.01
     assert sample_pos.y_coordinate.magnitude == 0.02
+
+
+def test_sputter_power_supply_reference_normalize(archive):
+    ps = SputterPowerSupply()
+    ps.supported_modes = ['Direct Current (DC)']
+
+    ps_ref = SputterPowerSupplyReference()
+    ps_ref.reference = ps
+    ps_ref.mode = 'Radio Frequency (RF)'
+
+    class MockLogger:
+        def __init__(self):
+            self.warnings = []
+        def warning(self, msg):
+            self.warnings.append(msg)
+
+    logger = MockLogger()
+    ps_ref.normalize(archive, logger)
+
+    assert len(logger.warnings) == 1
+    assert logger.warnings[0] == 'Specified sputter mode not supported by power supply'
+
+
+def test_dc_sputtering_normalize(archive):
+    dc = DCSputterPowerSupplyReference()
+    dc.voltage = PowerSupplyVoltage(value=[10.0])
+    dc.current = PowerSupplyCurrent(value=[2.0])
+    dc.power = PowerSupplyPower()
+
+    dc.normalize(archive, None)
+
+    assert dc.power.value[0].magnitude == 20.0
+
+
+def test_rf_sputtering_normalize(archive):
+    rf = RFSputterPowerSupplyReference()
+    rf.forward_power = PowerSupplyPower(value=[100.0])
+    rf.reflected_power = PowerSupplyPower(value=[10.0])
+    rf.power = PowerSupplyPower()
+
+    rf.normalize(archive, None)
+
+    assert rf.power.value[0].magnitude == 90.0
+
+
+def test_sputter_source_normalize(archive):
+    source = SputterSource()
+    ps_ref = SputterPowerSupplyReference()
+    ps_ref.power = PowerSupplyPower(value=[150.0])
+    source.power_supply = ps_ref
+    source.power = SourcePower()
+
+    source.normalize(archive, None)
+
+    assert source.power.value[0].magnitude == 150.0
