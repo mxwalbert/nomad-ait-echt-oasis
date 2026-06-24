@@ -1,4 +1,5 @@
 from nomad_material_processing.vapor_deposition.pvd.general import SourcePower
+from nomad_material_processing.vapor_deposition.general import Temperature
 from nomad_ait_echt_oasis.schema_packages.infrastructure import LIMSDeviceReference
 from nomad_ait_echt_oasis.schema_packages.sputter_deposition.v0 import (
     SputterCathodeReference,
@@ -19,6 +20,9 @@ from nomad_ait_echt_oasis.schema_packages.sputter_deposition.v0 import (
     PowerSupplyVoltage,
     PowerSupplyCurrent,
     PowerSupplyPower,
+    SputterSubstrateHeater,
+    SputterSubstrateHeaterReference,
+    SputterChamberEnvironment,
 )
 
 
@@ -203,3 +207,28 @@ def test_sputter_source_normalize(archive):
     source.normalize(archive, None)
 
     assert source.power.value[0].magnitude == 150.0
+
+
+def test_sputter_heater_normalize(archive):
+    """Test that heater configuration is copied from environment to sample parameters."""
+    
+    heater = SputterSubstrateHeater(heater_type='Halogen lamp')
+    
+    heater_ref = SputterSubstrateHeaterReference()
+    heater_ref.reference = heater
+    heater_ref.temperature = Temperature(value=[300.0])
+    
+    env = SputterChamberEnvironment()
+    env.heater = heater_ref
+    
+    sp = SputterSampleParameters(position=SamplePosition(name='Pos1'))
+    
+    step = SputterDepositionStep()
+    step.environment = env
+    step.sample_parameters = [sp]
+    
+    step.normalize(archive, None)
+    
+    assert sp.heater == 'Halogen lamp'
+    assert sp.substrate_temperature is not None
+    assert sp.substrate_temperature.value[0].magnitude == 300.0

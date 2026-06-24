@@ -29,6 +29,8 @@ from nomad_material_processing.general import (
 )
 from nomad_material_processing.vapor_deposition.general import (
     ChamberEnvironment,
+    SubstrateHeater,
+    Temperature,
 )
 from nomad_material_processing.vapor_deposition.pvd.general import (
     PhysicalVaporDeposition,
@@ -57,6 +59,14 @@ sputter_mode_values = (
     'Radio Frequency (RF)',
     'Pulsed Direct Current (PDMS)',
     'High Power Impulse (HiPIMS)',
+    'Other',
+)
+
+heater_type_values = (
+    'Halogen lamp',
+    'Filament',
+    'Resistive element',
+    'CO2 laser',
     'Other',
 )
 
@@ -735,13 +745,25 @@ class SputterSampleParameters(PVDSampleParameters):
         substrate (ThinFilmStackReference)
 
     Inherited from `PVDSampleParameters`:
-        heater (list[str])
         distance_to_source (float)
 
     Own properties:
+        heater (list[str])
         position (SamplePosition)
     """
 
+    heater = Quantity(
+        type=MEnum(*heater_type_values),
+        shape=[],
+        description="""
+        The type of heater used for the deposition process.
+        """,
+        default='Other',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.EnumEditQuantity,
+            label='Heater type',
+        ),
+    )
     position = SubSection(
         section_def=SamplePosition,
         description="""
@@ -835,6 +857,75 @@ class SputterSubstrateHolderReference(LIMSDeviceReference):
     )
 
 
+class SputterSubstrateHeater(SubstrateHeater, LIMSDevice):
+    """
+    A heater for substrates in a sputter deposition process.
+
+    Inherited from `BaseSection`:
+        name (str)
+        datetime (Datetime)
+        lab_id (str)
+        description (str)
+
+    Inherited from `LIMSDevice`:
+        vendor (str)
+        model (str)
+        serial (str)
+        activation_date (Datetime)
+        device_type (str)
+
+    Own properties:
+        heater_type (str)
+    """
+
+    heater_type = Quantity(
+        type=MEnum(*heater_type_values),
+        shape=[],
+        description="""
+        The type of heater used for the deposition process.
+        """,
+        default='Other',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.EnumEditQuantity,
+            label='Heater type',
+        ),
+    )
+
+
+class SputterSubstrateHeaterReference(LIMSDeviceReference):
+    """
+    A section used for referencing a SputterSubstrateHeater and
+    tracking the parameters during the deposition process.
+
+    Inherited from `SectionReference`:
+        name (str)
+
+    Inherited from `EntityReference`:
+        lab_id (str)
+
+    Own properties:
+        reference (SputterSubstrateHeater)
+        temperature (Temperature)
+    """
+
+    reference = Quantity(
+        type=SputterSubstrateHeater,
+        description="""
+        A reference to a `SputterSubstrateHeater` entry.
+        """,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.ReferenceEditQuantity,
+            label='SputterSubstrateHeater reference',
+        ),
+    )
+    temperature = SubSection(
+        section_def=Temperature,
+        description="""
+        The temperature of the substrate heater.
+        """,
+    )
+
+
 class SputterChamberEnvironment(ChamberEnvironment):
     """
     The conditions inside the chamber during a sputter deposition process.
@@ -842,8 +933,17 @@ class SputterChamberEnvironment(ChamberEnvironment):
     Inherited from `ChamberEnvironment`:
         gas_flow (GasFlow)
         pressure (Pressure)
-        heater (SubstrateHeater)
+
+    Own properties:
+        heater (SputterSubstrateHeaterReference)
     """
+
+    heater = SubSection(
+        section_def=SputterSubstrateHeaterReference,
+        description="""
+        The heater used for the deposition process.
+        """,
+    )
 
 
 class SputterDepositionStep(PVDStep):
@@ -897,6 +997,9 @@ class SputterDepositionStep(PVDStep):
         """
         Replaces the coordinates of the sample parameters positions with
         the substrate holder positions if the names match.
+
+        Copies the heater type and temperature from the environment to the
+        sample parameters.
         """
 
         super().normalize(archive, logger)
@@ -905,12 +1008,21 @@ class SputterDepositionStep(PVDStep):
             for sp in self.sample_parameters:
                 pos = sp.position
                 pos.normalize(archive, logger)
-                substrate_holder = self.substrate_holder.reference
-                if substrate_holder is None or substrate_holder.positions is None:
-                    continue
-                if pos.name in [p.name for p in substrate_holder.positions]:
-                    pos.x_coordinate = substrate_holder.positions[pos.name].x_coordinate
-                    pos.y_coordinate = substrate_holder.positions[pos.name].y_coordinate
+
+                if self.m_xpath(
+                    'substrate_holder.reference.positions'
+                ) is not None and pos.name in [
+                    p.name for p in self.substrate_holder.reference.positions
+                ]:
+                    holder_positions = self.substrate_holder.reference.positions
+                    pos.x_coordinate = holder_positions[pos.name].x_coordinate
+                    pos.y_coordinate = holder_positions[pos.name].y_coordinate
+
+                if self.m_xpath('environment.heater.reference') is not None:
+                    sp.heater = self.environment.heater.reference.heater_type
+
+                if self.m_xpath('environment.heater.temperature') is not None:
+                    sp.substrate_temperature = self.environment.heater.temperature
 
 
 class DepositionCategory(EntryDataCategory):
