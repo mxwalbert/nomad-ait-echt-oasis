@@ -1,4 +1,3 @@
-from nomad_material_processing.vapor_deposition.general import SubstrateHolderPosition
 from nomad_material_processing.vapor_deposition.pvd.general import SourcePower
 from nomad_ait_echt_oasis.schema_packages.infrastructure import LIMSDeviceReference
 from nomad_ait_echt_oasis.schema_packages.sputter_deposition.v0 import (
@@ -133,7 +132,7 @@ def test_sputter_deposition_step_normalize(archive):
     """Test that SamplePosition inherits coordinates from the substrate holder."""
     
     holder = SputterSubstrateHolder()
-    holder_pos = SubstrateHolderPosition(name='Pos1', x_position=0.01, y_position=0.02)
+    holder_pos = SamplePosition(name='Pos1', x_coordinate=0.01, y_coordinate=0.02)
     holder.positions = [holder_pos]
     
     holder_ref = SputterSubstrateHolderReference(reference=holder)
