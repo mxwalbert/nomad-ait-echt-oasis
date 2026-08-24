@@ -1,3 +1,5 @@
+import numpy as np
+import pytest
 from nomad_material_processing.vapor_deposition.pvd.general import SourcePower
 from nomad_material_processing.vapor_deposition.general import Temperature
 from nomad_ait_echt_oasis.schema_packages.infrastructure import LIMSDeviceReference
@@ -5,11 +7,14 @@ from nomad_ait_echt_oasis.schema_packages.sputter_deposition.v0 import (
     SputterCathodeReference,
     SputterDeposition,
     SputterDepositionStep,
+    SputterGrowthRate,
     SputterInstrument,
     SputterPowerSupply,
     SputterPowerSupplyReference,
     SputterSource,
     SputterSourceConfiguration,
+    SputterThicknessCalibration,
+    SputterThicknessCalibrationReference,
     sputter_mode_values,
     SamplePosition,
     SputterSampleParameters,
@@ -232,3 +237,52 @@ def test_sputter_heater_normalize(archive):
     assert sp.heater == 'Halogen lamp'
     assert sp.substrate_temperature is not None
     assert sp.substrate_temperature.value[0].magnitude == 300.0
+
+
+def test_sputter_growth_rate(archive):
+    """Test SputterGrowthRate instantiation, quantities, and measurement_type enum."""
+    growth_rate = SputterGrowthRate(
+        measurement_type='QCM',
+        value=[0.12, 0.15],
+        time=[0.0, 30.0],
+        set_value=[0.15, 0.15],
+    )
+    growth_rate.normalize(archive, None)
+
+    assert growth_rate.measurement_type == 'QCM'
+    np.testing.assert_allclose(np.asarray(getattr(growth_rate.value, 'magnitude', growth_rate.value)), [0.12, 0.15])
+    np.testing.assert_allclose(np.asarray(getattr(growth_rate.time, 'magnitude', growth_rate.time)), [0.0, 30.0])
+    np.testing.assert_allclose(np.asarray(getattr(growth_rate.set_value, 'magnitude', growth_rate.set_value)), [0.15, 0.15])
+
+
+def test_sputter_thickness_calibration_and_instrument(archive):
+    """Test SputterThicknessCalibration, reference section, and instrument attachment."""
+    step = SputterDepositionStep(name='Deposition Step 1')
+    calib = SputterThicknessCalibration(
+        name='Target A Thickness Calibration',
+        model_type='zero-intercept linear',
+        input_values=[60.0, 120.0, 180.0],
+        output_values=[12.0, 24.0, 36.0],
+        step=step,
+    )
+    calib.normalize(archive, None)
+
+    assert calib.step == step
+    assert calib.model_coefficients is not None
+    assert len(calib.model_coefficients) == 1
+    assert calib.model_coefficients[0] == pytest.approx(0.2, rel=1e-3)
+
+    calib_ref = SputterThicknessCalibrationReference(
+        name='Target A Calib Ref',
+        reference=calib,
+    )
+
+    instrument = SputterInstrument(
+        name='Sputter System',
+        calibrations=[calib_ref],
+    )
+    instrument.normalize(archive, None)
+
+    assert len(instrument.calibrations) == 1
+    assert instrument.calibrations[0].reference == calib
+    assert instrument.calibrations[0].name == 'Target A Calib Ref'

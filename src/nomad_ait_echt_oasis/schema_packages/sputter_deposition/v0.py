@@ -29,6 +29,7 @@ from nomad_material_processing.general import (
 )
 from nomad_material_processing.vapor_deposition.general import (
     ChamberEnvironment,
+    GrowthRate,
     SubstrateHeater,
     Temperature,
 )
@@ -41,6 +42,8 @@ from nomad_material_processing.vapor_deposition.pvd.general import (
 )
 
 from nomad_ait_echt_oasis.schema_packages.infrastructure import (
+    LIMSCalibration,
+    LIMSCalibrationReference,
     LIMSConsumable,
     LIMSConsumableReference,
     LIMSDevice,
@@ -59,6 +62,14 @@ sputter_mode_values = (
     'Radio Frequency (RF)',
     'Pulsed Direct Current (PDMS)',
     'High Power Impulse (HiPIMS)',
+    'Other',
+)
+
+measurement_type_values = (
+    'Assumed',
+    'RHEED',
+    'Reflectance',
+    'QCM',
     'Other',
 )
 
@@ -101,7 +112,7 @@ class SputterTarget(CompositeSystem, LIMSConsumable):
     geometry = SubSection(
         section_def=Cylinder,
         description="""
-        The geometry of the sputter target.
+        The cylindrical dimensions of the sputter target.
         """,
     )
 
@@ -135,8 +146,8 @@ class SputterTargetReference(LIMSConsumableReference):
 class SputterCathodePosition(ArchiveSection):
     """
     Defines the spatial location and orientation of a sputter cathode,
-    i.e., the target surface, relative to the center of the mount for
-    the substrate holder.
+    i.e., the surface where the target is mounted, relative to the center
+    of the mount for the substrate holder.
 
     Own properties:
         x_offset (float)
@@ -640,17 +651,18 @@ class SputterSourceConfiguration(PVDSource):
 
     Inherited from `VaporDepositionSource`:
         name (str)
+        material (list[Component])
         vapor_molar_flow_rate (MolarFlowRate)
 
     Inherited from `PVDSource`:
         impinging_flux (ImpingingFlux)
 
     Own properties:
-        material (SputterTargetReference)
+        material_source (SputterTargetReference)
         vapor_source (SputterSource)
     """
 
-    material = SubSection(
+    material_source = SubSection(
         section_def=SputterTargetReference,
         description="""
         The target used for the deposition process.
@@ -731,6 +743,35 @@ class SamplePosition(ArchiveSection):
             self.name = f'{x},{y}'
 
 
+class SputterGrowthRate(GrowthRate):
+    """
+    The growth rate of a sputtered thin film.
+
+    Inherited from `TimeSeries`:
+        set_time (np.ndarray[float])
+        time (np.ndarray[float])
+
+    Inherited from `GrowthRate`:
+        set_value (np.ndarray[float])
+        value (np.ndarray[float])
+
+    Own properties:
+        measurement_type (str)
+    """
+
+    measurement_type = Quantity(
+        type=MEnum(*measurement_type_values),
+        shape=[],
+        description="""
+        The type of measurement for determining the growth rate.
+        """,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.EnumEditQuantity,
+            label='Measurement type',
+        ),
+    )
+
+
 class SputterSampleParameters(PVDSampleParameters):
     """
     Parameters for a sample in a sputter deposition process.
@@ -739,7 +780,6 @@ class SputterSampleParameters(PVDSampleParameters):
         figures (list[PlotlyFigure])
 
     Inherited from `SampleParameters`:
-        growth_rate (GrowthRate)
         substrate_temperature (Temperature)
         layer (ThinFilmReference)
         substrate (ThinFilmStackReference)
@@ -748,10 +788,17 @@ class SputterSampleParameters(PVDSampleParameters):
         distance_to_source (float)
 
     Own properties:
+        growth_rate (SputterGrowthRate)
         heater (list[str])
         position (SamplePosition)
     """
 
+    growth_rate = SubSection(
+        section_def=SputterGrowthRate,
+        description="""
+        The growth rate of the thin film.
+        """,
+    )
     heater = Quantity(
         type=MEnum(*heater_type_values),
         shape=[],
@@ -931,7 +978,7 @@ class SputterChamberEnvironment(ChamberEnvironment):
     The conditions inside the chamber during a sputter deposition process.
 
     Inherited from `ChamberEnvironment`:
-        gas_flow (GasFlow)
+        gas_flow (list[GasFlow])
         pressure (Pressure)
 
     Own properties:
@@ -1036,6 +1083,61 @@ class DepositionCategory(EntryDataCategory):
     )
 
 
+class SputterThicknessCalibration(LIMSCalibration):
+    """
+    A calibration for the thickness of a film deposited by sputtering.
+
+    Inherited from `BaseSection`:
+        name (str)
+        datetime (Datetime)
+        lab_id (str)
+        description (str)
+
+    Inherited from `LIMSCalibration`:
+        input_values (np.ndarray[float])
+        output_values (np.ndarray[float])
+        model_coefficients (np.ndarray[float])
+        model_type (str)
+
+    Own properties:
+        step (SputterDepositionStep)
+    """
+
+    step = SubSection(
+        section_def=SputterDepositionStep,
+        description="""
+        The step of a sputter deposition process which contains the parameters
+        that lead to the calibration result.
+        """,
+    )
+
+
+class SputterThicknessCalibrationReference(LIMSCalibrationReference):
+    """
+    A section used for referencing a SputterThicknessCalibration.
+
+    Inherited from `SectionReference`:
+        name (str)
+
+    Inherited from `EntityReference`:
+        lab_id (str)
+
+    Own properties:
+        reference (SputterThicknessCalibration)
+    """
+
+    reference = Quantity(
+        type=SputterThicknessCalibration,
+        description="""
+        A reference to a `SputterThicknessCalibration` entry.
+        """,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.ReferenceEditQuantity,
+            label='SputterThicknessCalibration reference',
+        ),
+    )
+
+
 class SputterInstrument(LIMSInstrument):
     """
     A tool for sputter deposition.
@@ -1059,6 +1161,7 @@ class SputterInstrument(LIMSInstrument):
     Own properties:
         cathodes (list[SputterCathodeReference])
         power_supplies (list[SputterPowerSupplyReference])
+        calibrations (list[SputterThicknessCalibrationReference])
     """
 
     cathodes = SubSection(
@@ -1073,6 +1176,14 @@ class SputterInstrument(LIMSInstrument):
         repeats=True,
         description="""
         The power supplies installed in the instrument.
+        """,
+    )
+    calibrations = SubSection(
+        section_def=SputterThicknessCalibrationReference,
+        repeats=True,
+        description="""
+        A list of references to `SputterThicknessCalibration` entries that are 
+        associated with this instrument.
         """,
     )
 
@@ -1132,6 +1243,9 @@ class SputterDeposition(PhysicalVaporDeposition, EntryData):
     steps = SubSection(
         section_def=SputterDepositionStep,
         repeats=True,
+        description="""
+        A list of steps that are part of the sputter deposition process.
+        """,
     )
 
 
