@@ -33,11 +33,11 @@ sputter_deposition = SputterDepositionSchema(
 
 class ElectrochemicalCharacterizationSchema(SchemaPackageEntryPoint):
     def load(self):
-        from nomad_ait_echt_oasis.schema_packages import (
-            electrochemical_characterization,
+        from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (  # noqa: E501
+            m_package,
         )
 
-        return electrochemical_characterization.m_package
+        return m_package
 
 
 electrochemical_characterization = ElectrochemicalCharacterizationSchema(

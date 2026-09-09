@@ -1202,9 +1202,254 @@ class CyclicVoltammetry(Voltammetry, EntryData):
 
         return figures
 
-    def normalize(  # noqa: PLR0912, PLR0915
-        self, archive: 'EntryArchive', logger: 'BoundLogger'
+    def _normalize_continuous_current_density(
+        self, result: CVResult, surface_area: float | None
     ) -> None:
+        """
+        Compute current density series on CVResult if electrode
+        surface area is known.
+        """
+        if (
+            surface_area
+            and surface_area > 0
+            and result.current is not None
+            and result.current_density is None
+        ):
+            current_arr = np.asarray(result.current.to('ampere').magnitude, dtype=float)
+            result.current_density = ((current_arr / surface_area) * 1000.0) * (
+                ureg.milliampere / (ureg.centimeter**2)
+            )
+
+    def _normalize_continuous_potential_vs_she(
+        self,
+        result: CVResult,
+        ref_potential_she: float | None,
+        ph_val: float | None,
+    ) -> None:
+        """
+        Convert potential series to SHE/RHE on CVResult if reference
+        potential and pH are known.
+        """
+        if (
+            ref_potential_she is not None
+            and ph_val is not None
+            and result.potential is not None
+            and result.potential_vs_she is None
+        ):
+            potential_arr = np.asarray(
+                result.potential.to('volt').magnitude, dtype=float
+            )
+            result.potential_vs_she = (
+                potential_arr + ref_potential_she + (0.05916 * ph_val)
+            ) * ureg.volt
+
+    def _auto_decompose_cycles(  # noqa: PLR0912, PLR0915
+        self,
+        result: CVResult,
+    ) -> None:
+        """
+        Auto-decompose contiguous data into CVCycle segments if
+        cycles are not provided.
+        """
+        if result.cycles or result.potential is None or result.current is None:
+            return
+
+        potential_arr = np.asarray(result.potential.to('volt').magnitude, dtype=float)
+        current_arr = np.asarray(result.current.to('ampere').magnitude, dtype=float)
+        time_arr = (
+            np.asarray(result.time.to('second').magnitude, dtype=float)
+            if result.time is not None
+            else None
+        )
+        j_arr = (
+            np.asarray(
+                result.current_density.to(CD_UNIT).magnitude,
+                dtype=float,
+            )
+            if result.current_density is not None
+            else None
+        )
+        v_she = (
+            np.asarray(result.potential_vs_she.to('volt').magnitude, dtype=float)
+            if result.potential_vs_she is not None
+            else None
+        )
+
+        if result.cycle_index is not None and len(result.cycle_index) == len(
+            potential_arr
+        ):
+            c_indices = np.asarray(result.cycle_index)
+            unique_cycles = np.unique(c_indices)
+            for c_val in unique_cycles:
+                mask = c_indices == c_val
+                cyc = CVCycle(
+                    cycle_index=int(c_val),
+                    potential=potential_arr[mask] * ureg.volt,
+                    current=current_arr[mask] * ureg.ampere,
+                )
+                if time_arr is not None:
+                    cyc.time = time_arr[mask] * ureg.second
+                if j_arr is not None:
+                    cyc.current_density = j_arr[mask] * (
+                        ureg.milliampere / (ureg.centimeter**2)
+                    )
+                if v_she is not None:
+                    cyc.potential_vs_she = v_she[mask] * ureg.volt
+                result.cycles.append(cyc)
+        elif len(potential_arr) > MIN_POINTS_FOR_CYCLE_SPLIT:
+            diffs = np.diff(potential_arr)
+            signs = np.sign(diffs)
+            signs = np.where(signs == 0, 1, signs)
+            turning_points = np.where(np.diff(signs) != 0)[0] + 1
+
+            cycle_breaks = [0]
+            for i in range(1, len(turning_points), 2):
+                cycle_breaks.append(turning_points[i])
+            if cycle_breaks[-1] != len(potential_arr):
+                cycle_breaks.append(len(potential_arr))
+
+            cycle_index_arr = np.zeros(len(potential_arr), dtype=int)
+            for c_idx in range(len(cycle_breaks) - 1):
+                start_i = cycle_breaks[c_idx]
+                end_i = cycle_breaks[c_idx + 1]
+                if end_i - start_i < MIN_CYCLE_LENGTH:
+                    continue
+
+                cycle_num = len(result.cycles) + 1
+                cycle_index_arr[start_i:end_i] = cycle_num
+
+                cyc = CVCycle(
+                    cycle_index=cycle_num,
+                    potential=potential_arr[start_i:end_i] * ureg.volt,
+                    current=current_arr[start_i:end_i] * ureg.ampere,
+                )
+                if time_arr is not None:
+                    cyc.time = time_arr[start_i:end_i] * ureg.second
+                if j_arr is not None:
+                    cyc.current_density = j_arr[start_i:end_i] * (
+                        ureg.milliampere / (ureg.centimeter**2)
+                    )
+                if v_she is not None:
+                    cyc.potential_vs_she = v_she[start_i:end_i] * ureg.volt
+                result.cycles.append(cyc)
+
+            if result.cycle_index is None and len(result.cycles) > 0:
+                result.cycle_index = cycle_index_arr
+        else:
+            cyc = CVCycle(
+                cycle_index=1,
+                potential=potential_arr * ureg.volt,
+                current=current_arr * ureg.ampere,
+            )
+            if time_arr is not None:
+                cyc.time = time_arr * ureg.second
+            if j_arr is not None:
+                cyc.current_density = j_arr * (ureg.milliampere / (ureg.centimeter**2))
+            if v_she is not None:
+                cyc.potential_vs_she = v_she * ureg.volt
+            result.cycles.append(cyc)
+            if result.cycle_index is None:
+                result.cycle_index = np.ones(len(potential_arr), dtype=int)
+
+    def _normalize_and_evaluate_cycles(
+        self,
+        result: CVResult,
+        surface_area: float | None,
+        ref_potential_she: float | None,
+        ph_val: float | None,
+    ) -> None:
+        """
+        Normalize individual cycles and extract redox peak parameters.
+        """
+        if not result.cycles:
+            return
+
+        for cyc in result.cycles:
+            if cyc.current is None or cyc.potential is None:
+                continue
+
+            c_v = np.asarray(cyc.potential.to('volt').magnitude, dtype=float)
+            c_i = np.asarray(cyc.current.to('ampere').magnitude, dtype=float)
+            c_t = (
+                np.asarray(cyc.time.to('second').magnitude, dtype=float)
+                if cyc.time is not None
+                else None
+            )
+
+            # Current density normalization on cycle
+            if surface_area and surface_area > 0 and cyc.current_density is None:
+                c_j = (c_i / surface_area) * 1000.0
+                cyc.current_density = c_j * (ureg.milliampere / (ureg.centimeter**2))
+            elif cyc.current_density is not None:
+                c_j = np.asarray(
+                    cyc.current_density.to(CD_UNIT).magnitude,
+                    dtype=float,
+                )
+            else:
+                c_j = None
+
+            # Potential vs SHE conversion on cycle
+            if (
+                ref_potential_she is not None
+                and ph_val is not None
+                and cyc.potential_vs_she is None
+            ):
+                cyc.potential_vs_she = (
+                    c_v + ref_potential_she + (0.05916 * ph_val)
+                ) * ureg.volt
+
+            # Calculate peaks and cycle metrics (ONLY in CVCycle)
+            self._calculate_peaks_and_metrics(cyc, c_v, c_i, c_j, c_t)
+
+    def _populate_continuous_data_from_cycles(self, result: CVResult) -> None:
+        """
+        Concatenate cycle arrays to populate continuous fields on
+        CVResult if not present.
+        """
+        if result.potential is not None or not result.cycles:
+            return
+
+        all_v = []
+        all_i = []
+        all_t = []
+        all_j = []
+        all_she = []
+        all_idx = []
+
+        has_times = all(cyc.time is not None for cyc in result.cycles)
+        has_j = all(cyc.current_density is not None for cyc in result.cycles)
+        has_she = all(cyc.potential_vs_she is not None for cyc in result.cycles)
+
+        for cyc in result.cycles:
+            if cyc.potential is None or cyc.current is None:
+                continue
+            n_pts = len(cyc.potential)
+            all_v.append(np.asarray(cyc.potential.to('volt').magnitude))
+            all_i.append(np.asarray(cyc.current.to('ampere').magnitude))
+            c_num = cyc.cycle_index if cyc.cycle_index is not None else 1
+            all_idx.append(np.full(n_pts, c_num, dtype=int))
+            if has_times and cyc.time is not None:
+                all_t.append(np.asarray(cyc.time.to('second').magnitude))
+            if has_j and cyc.current_density is not None:
+                all_j.append(np.asarray(cyc.current_density.to(CD_UNIT).magnitude))
+            if has_she and cyc.potential_vs_she is not None:
+                all_she.append(np.asarray(cyc.potential_vs_she.to('volt').magnitude))
+
+        if all_v:
+            result.potential = np.concatenate(all_v) * ureg.volt
+            result.current = np.concatenate(all_i) * ureg.ampere
+            if result.cycle_index is None:
+                result.cycle_index = np.concatenate(all_idx)
+            if all_t:
+                result.time = np.concatenate(all_t) * ureg.second
+            if all_j:
+                result.current_density = np.concatenate(all_j) * (
+                    ureg.milliampere / (ureg.centimeter**2)
+                )
+            if all_she:
+                result.potential_vs_she = np.concatenate(all_she) * ureg.volt
+
+    def normalize(self, archive: 'EntryArchive', logger: 'BoundLogger') -> None:
         """
         Normalizer for CyclicVoltammetry:
         1. Synchronizes samples and fills reference defaults via super().
@@ -1249,240 +1494,23 @@ class CyclicVoltammetry(Voltammetry, EntryData):
 
         for result in self.results:
             # 1. Continuous current density normalization on CVResult
-            if (
-                surface_area_val
-                and surface_area_val > 0
-                and result.current is not None
-                and result.current_density is None
-            ):
-                current_arr = np.asarray(
-                    result.current.to('ampere').magnitude, dtype=float
-                )
-                result.current_density = ((current_arr / surface_area_val) * 1000.0) * (
-                    ureg.milliampere / (ureg.centimeter**2)
-                )
+            self._normalize_continuous_current_density(result, surface_area_val)
 
             # 2. Continuous SHE/RHE conversion on CVResult
-            if (
-                ref_potential_she is not None
-                and ph_val is not None
-                and result.potential is not None
-                and result.potential_vs_she is None
-            ):
-                potential_arr = np.asarray(
-                    result.potential.to('volt').magnitude, dtype=float
-                )
-                result.potential_vs_she = (
-                    potential_arr + ref_potential_she + (0.05916 * ph_val)
-                ) * ureg.volt
+            self._normalize_continuous_potential_vs_she(
+                result, ref_potential_she, ph_val
+            )
 
             # 3. Auto-decompose continuous data into CVCycle segments if not provided
-            if (
-                not result.cycles
-                and result.potential is not None
-                and result.current is not None
-            ):
-                potential_arr = np.asarray(
-                    result.potential.to('volt').magnitude, dtype=float
-                )
-                current_arr = np.asarray(
-                    result.current.to('ampere').magnitude, dtype=float
-                )
-                time_arr = (
-                    np.asarray(result.time.to('second').magnitude, dtype=float)
-                    if result.time is not None
-                    else None
-                )
-                j_arr = (
-                    np.asarray(
-                        result.current_density.to(CD_UNIT).magnitude,
-                        dtype=float,
-                    )
-                    if result.current_density is not None
-                    else None
-                )
-                v_she = (
-                    np.asarray(
-                        result.potential_vs_she.to('volt').magnitude, dtype=float
-                    )
-                    if result.potential_vs_she is not None
-                    else None
-                )
-
-                if result.cycle_index is not None and len(result.cycle_index) == len(
-                    potential_arr
-                ):
-                    c_indices = np.asarray(result.cycle_index)
-                    unique_cycles = np.unique(c_indices)
-                    for c_val in unique_cycles:
-                        mask = c_indices == c_val
-                        cyc = CVCycle(
-                            cycle_index=int(c_val),
-                            potential=potential_arr[mask] * ureg.volt,
-                            current=current_arr[mask] * ureg.ampere,
-                        )
-                        if time_arr is not None:
-                            cyc.time = time_arr[mask] * ureg.second
-                        if j_arr is not None:
-                            cyc.current_density = j_arr[mask] * (
-                                ureg.milliampere / (ureg.centimeter**2)
-                            )
-                        if v_she is not None:
-                            cyc.potential_vs_she = v_she[mask] * ureg.volt
-                        result.cycles.append(cyc)
-                elif len(potential_arr) > MIN_POINTS_FOR_CYCLE_SPLIT:
-                    diffs = np.diff(potential_arr)
-                    signs = np.sign(diffs)
-                    signs = np.where(signs == 0, 1, signs)
-                    turning_points = np.where(np.diff(signs) != 0)[0] + 1
-
-                    cycle_breaks = [0]
-                    for i in range(1, len(turning_points), 2):
-                        cycle_breaks.append(turning_points[i])
-                    if cycle_breaks[-1] != len(potential_arr):
-                        cycle_breaks.append(len(potential_arr))
-
-                    cycle_index_arr = np.zeros(len(potential_arr), dtype=int)
-                    for c_idx in range(len(cycle_breaks) - 1):
-                        start_i = cycle_breaks[c_idx]
-                        end_i = cycle_breaks[c_idx + 1]
-                        if end_i - start_i < MIN_CYCLE_LENGTH:
-                            continue
-
-                        cycle_num = len(result.cycles) + 1
-                        cycle_index_arr[start_i:end_i] = cycle_num
-
-                        cyc = CVCycle(
-                            cycle_index=cycle_num,
-                            potential=potential_arr[start_i:end_i] * ureg.volt,
-                            current=current_arr[start_i:end_i] * ureg.ampere,
-                        )
-                        if time_arr is not None:
-                            cyc.time = time_arr[start_i:end_i] * ureg.second
-                        if j_arr is not None:
-                            cyc.current_density = j_arr[start_i:end_i] * (
-                                ureg.milliampere / (ureg.centimeter**2)
-                            )
-                        if v_she is not None:
-                            cyc.potential_vs_she = v_she[start_i:end_i] * ureg.volt
-                        result.cycles.append(cyc)
-
-                    if result.cycle_index is None and len(result.cycles) > 0:
-                        result.cycle_index = cycle_index_arr
-                else:
-                    cyc = CVCycle(
-                        cycle_index=1,
-                        potential=potential_arr * ureg.volt,
-                        current=current_arr * ureg.ampere,
-                    )
-                    if time_arr is not None:
-                        cyc.time = time_arr * ureg.second
-                    if j_arr is not None:
-                        cyc.current_density = j_arr * (
-                            ureg.milliampere / (ureg.centimeter**2)
-                        )
-                    if v_she is not None:
-                        cyc.potential_vs_she = v_she * ureg.volt
-                    result.cycles.append(cyc)
-                    if result.cycle_index is None:
-                        result.cycle_index = np.ones(len(potential_arr), dtype=int)
+            self._auto_decompose_cycles(result)
 
             # 4. Normalize individual cycles and calculate metrics in CVCycle
-            if result.cycles:
-                for cyc in result.cycles:
-                    if cyc.current is None or cyc.potential is None:
-                        continue
+            self._normalize_and_evaluate_cycles(
+                result, surface_area_val, ref_potential_she, ph_val
+            )
 
-                    c_v = np.asarray(cyc.potential.to('volt').magnitude, dtype=float)
-                    c_i = np.asarray(cyc.current.to('ampere').magnitude, dtype=float)
-                    c_t = (
-                        np.asarray(cyc.time.to('second').magnitude, dtype=float)
-                        if cyc.time is not None
-                        else None
-                    )
-
-                    # Current density normalization on cycle
-                    if (
-                        surface_area_val
-                        and surface_area_val > 0
-                        and cyc.current_density is None
-                    ):
-                        c_j = (c_i / surface_area_val) * 1000.0
-                        cyc.current_density = c_j * (
-                            ureg.milliampere / (ureg.centimeter**2)
-                        )
-                    elif cyc.current_density is not None:
-                        c_j = np.asarray(
-                            cyc.current_density.to(CD_UNIT).magnitude,
-                            dtype=float,
-                        )
-                    else:
-                        c_j = None
-
-                    # Potential vs SHE conversion on cycle
-                    if (
-                        ref_potential_she is not None
-                        and ph_val is not None
-                        and cyc.potential_vs_she is None
-                    ):
-                        cyc.potential_vs_she = (
-                            c_v + ref_potential_she + (0.05916 * ph_val)
-                        ) * ureg.volt
-
-                    # Calculate peaks and cycle metrics (ONLY in CVCycle)
-                    self._calculate_peaks_and_metrics(cyc, c_v, c_i, c_j, c_t)
-
-                # 5. Populate continuous arrays on CVResult from cycles if not present
-                if result.potential is None:
-                    all_v = []
-                    all_i = []
-                    all_t = []
-                    all_j = []
-                    all_she = []
-                    all_idx = []
-
-                    has_times = all(cyc.time is not None for cyc in result.cycles)
-                    has_j = all(
-                        cyc.current_density is not None for cyc in result.cycles
-                    )
-                    has_she = all(
-                        cyc.potential_vs_she is not None for cyc in result.cycles
-                    )
-
-                    for cyc in result.cycles:
-                        if cyc.potential is None or cyc.current is None:
-                            continue
-                        n_pts = len(cyc.potential)
-                        all_v.append(np.asarray(cyc.potential.to('volt').magnitude))
-                        all_i.append(np.asarray(cyc.current.to('ampere').magnitude))
-                        c_num = cyc.cycle_index if cyc.cycle_index is not None else 1
-                        all_idx.append(np.full(n_pts, c_num, dtype=int))
-                        if has_times and cyc.time is not None:
-                            all_t.append(np.asarray(cyc.time.to('second').magnitude))
-                        if has_j and cyc.current_density is not None:
-                            all_j.append(
-                                np.asarray(cyc.current_density.to(CD_UNIT).magnitude)
-                            )
-                        if has_she and cyc.potential_vs_she is not None:
-                            all_she.append(
-                                np.asarray(cyc.potential_vs_she.to('volt').magnitude)
-                            )
-
-                    if all_v:
-                        result.potential = np.concatenate(all_v) * ureg.volt
-                        result.current = np.concatenate(all_i) * ureg.ampere
-                        if result.cycle_index is None:
-                            result.cycle_index = np.concatenate(all_idx)
-                        if all_t:
-                            result.time = np.concatenate(all_t) * ureg.second
-                        if all_j:
-                            result.current_density = np.concatenate(all_j) * (
-                                ureg.milliampere / (ureg.centimeter**2)
-                            )
-                        if all_she:
-                            result.potential_vs_she = (
-                                np.concatenate(all_she) * ureg.volt
-                            )
+            # 5. Populate continuous arrays on CVResult from cycles if not present
+            self._populate_continuous_data_from_cycles(result)
 
             # 6. Generate Plotly figures
             result.figures = self._generate_plotly_figures(
