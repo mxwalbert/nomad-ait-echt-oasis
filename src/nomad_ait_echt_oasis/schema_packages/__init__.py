@@ -29,3 +29,21 @@ sputter_deposition = SputterDepositionSchema(
     Schema package containing specific classes for the sputtering process.
     """,
 )
+
+
+class ElectrochemicalCharacterizationSchema(SchemaPackageEntryPoint):
+    def load(self):
+        from nomad_ait_echt_oasis.schema_packages import (
+            electrochemical_characterization,
+        )
+
+        return electrochemical_characterization.m_package
+
+
+electrochemical_characterization = ElectrochemicalCharacterizationSchema(
+    name='AIT ECHT Electrochemical Characterization Schema',
+    description="""
+    Schema package containing schemas for electrochemical characterization
+    techniques based on the ECHO domain ontology.
+    """,
+)
