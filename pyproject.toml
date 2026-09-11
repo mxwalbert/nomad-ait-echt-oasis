@@ -14,7 +14,7 @@ classifiers = [
 ]
 name = "nomad-ait-echt-oasis"
 description = "A NOMAD plugin containing schemas, parsers, etc. for material processing and analysis methods at the ECHT group of AIT."
-version = "0.4.1"
+version = "0.4.2"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -119,7 +119,7 @@ schema_package_infrastructure = "nomad_ait_echt_oasis.schema_packages:infrastruc
 schema_package_sputter_deposition = "nomad_ait_echt_oasis.schema_packages:sputter_deposition"
 schema_package_electrochemical_characterization = "nomad_ait_echt_oasis.schema_packages:electrochemical_characterization"
 parser_entry_point = "nomad_ait_echt_oasis.parsers:parser_entry_point"
-normalizer_entry_point = "nomad_ait_echt_oasis.normalizers:normalizer_entry_point"
+xy_pec_parser = "nomad_ait_echt_oasis.parsers:xy_pec_parser"
 app_entry_point = "nomad_ait_echt_oasis.apps:app_entry_point"
 example_upload_entry_point = "nomad_ait_echt_oasis.example_uploads:example_upload_entry_point"
 api_entry_point = "nomad_ait_echt_oasis.apis:api_entry_point"

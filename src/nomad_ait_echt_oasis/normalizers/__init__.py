@@ -1,17 +1,5 @@
-from nomad.config.models.plugins import NormalizerEntryPoint
-from pydantic import Field
+from . import electrochemical_characterization
 
-
-class NewNormalizerEntryPoint(NormalizerEntryPoint):
-    parameter: int = Field(0, description='Custom configuration parameter')
-
-    def load(self):
-        from nomad_ait_echt_oasis.normalizers.normalizer import NewNormalizer
-
-        return NewNormalizer(**self.model_dump())
-
-
-normalizer_entry_point = NewNormalizerEntryPoint(
-    name='NewNormalizer',
-    description='New normalizer entry point configuration.',
-)
+__all__ = [
+    'electrochemical_characterization',
+]

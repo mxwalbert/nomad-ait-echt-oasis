@@ -1,7 +1,6 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
-import plotly.graph_objs as go
 from nomad.datamodel.data import (
     ArchiveSection,
     Category,
@@ -19,7 +18,6 @@ from nomad.datamodel.metainfo.basesections import (
     MeasurementResult,
 )
 from nomad.datamodel.metainfo.plot import (
-    PlotlyFigure,
     PlotSection,
 )
 from nomad.metainfo import (
@@ -29,12 +27,24 @@ from nomad.metainfo import (
     Section,
     SubSection,
 )
-from nomad.units import ureg
 from nomad_material_processing.solution.general import (
     Solution,
 )
-from scipy.signal import find_peaks
+from nomad_measurements.mapping.schema import (
+    MappingMeasurement,
+    MappingResult,
+)
 
+from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cell import (
+    normalize_three_electrode_cell,
+)
+from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cv import (
+    normalize_cyclic_voltammetry,
+)
+from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.ecsa import (
+    normalize_ecsa_measurement,
+    normalize_ecsa_result,
+)
 from nomad_ait_echt_oasis.schema_packages.infrastructure import (
     LIMSInstrument,
     LIMSInstrumentReference,
@@ -71,20 +81,8 @@ m_package = SchemaPackage(
 )
 
 # --- Named Constants for Validation and Calculations ---
-MIN_POINTS_FOR_PEAK_DETECTION = 5
 MIN_POINTS_FOR_CYCLE_SPLIT = 10
 MIN_CYCLE_LENGTH = 4
-
-STANDARD_REFERENCE_POTENTIALS_VS_SHE = {
-    'Ag/AgCl (sat. KCl)': 0.197,
-    'Ag/AgCl (3M KCl)': 0.210,
-    'Ag/AgCl (1M KCl)': 0.236,
-    'Standard Hydrogen Electrode (SHE)': 0.0,
-    'Reversible Hydrogen Electrode (RHE)': 0.0,
-    'Saturated Calomel Electrode (SCE)': 0.241,
-    'Mercury-Mercurous Sulfate (MSE, sat. K2SO4)': 0.640,
-    'Mercury-Mercuric Oxide (Hg/HgO, 1M KOH)': 0.098,
-}
 
 # --- Constants for abbreviating long unit strings ---
 CD_UNIT = 'milliampere / centimeter ** 2'
@@ -416,15 +414,13 @@ class ReferenceElectrode(Electrode):
 
     reference_type = Quantity(
         type=MEnum(
+            'Reversible Hydrogen Electrode (RHE)',
             'Ag/AgCl (sat. KCl)',
             'Ag/AgCl (3M KCl)',
             'Ag/AgCl (1M KCl)',
-            'Standard Hydrogen Electrode (SHE)',
-            'Reversible Hydrogen Electrode (RHE)',
             'Saturated Calomel Electrode (SCE)',
             'Mercury-Mercurous Sulfate (MSE, sat. K2SO4)',
             'Mercury-Mercuric Oxide (Hg/HgO, 1M KOH)',
-            'Ag/Ag+ (non-aqueous)',
             'Other',
         ),
         default='Reversible Hydrogen Electrode (RHE)',
@@ -437,17 +433,17 @@ class ReferenceElectrode(Electrode):
         ),
     )
 
-    standard_potential_vs_she = Quantity(
+    standard_potential_vs_rhe = Quantity(
         type=float,
         unit='volt',
         description="""
         The standard reduction potential of this reference electrode relative
-        to the Standard Hydrogen Electrode (SHE).
+        to the Reversible Hydrogen Electrode (RHE).
         """,
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.NumberEditQuantity,
             defaultDisplayUnit='volt',
-            label='E° vs. SHE',
+            label='E° vs. RHE',
         ),
     )
 
@@ -550,6 +546,34 @@ class ThreeElectrodeCell(ElectrochemicalCell):
         """,
     )
 
+    surface_area = Quantity(
+        type=float,
+        unit='centimeter ** 2',
+        description="""
+        Active geometric surface area of the working electrode.
+        """,
+    )
+
+    reference_potential_vs_rhe = Quantity(
+        type=float,
+        unit='volt',
+        description="""
+        Standard potential of the reference electrode vs. RHE.
+        """,
+    )
+
+    ph_value = Quantity(
+        type=float,
+        description="""
+        Electrolyte pH value.
+        """,
+    )
+
+    def normalize(self, archive: 'EntryArchive', logger: 'BoundLogger') -> None:
+        """Normalize reference electrode and synchronize flattened cell properties."""
+        super().normalize(archive, logger)
+        normalize_three_electrode_cell(self, archive, logger)
+
 
 # --- Electrochemical Measurement & Results ---
 class MeasurementParameter(ArchiveSection):
@@ -601,13 +625,20 @@ class ElectrochemicalTesting(Measurement):
     cell = SubSection(
         section_def=ThreeElectrodeCell,
         description="""
-        The electrochemical cell used in the measurement.
+        The electrochemical cell configuration used in the measurement.
+        """,
+    )
+
+    parameters = SubSection(
+        section_def=ElectrochemicalMeasurementParameter,
+        description="""
+        Parameters of the electrochemical measurement.
         """,
     )
 
     def normalize(self, archive: 'EntryArchive', logger: 'BoundLogger') -> None:
         """
-        Normalizer for BaseElectrochemicalMeasurement.
+        Normalizer for base ElectrochemicalMeasurement.
         - Synchronizes the sample between `cell.working_electrode.sample`
           and `Measurement.samples`.
         - Fills standard reduction potentials for reference electrodes
@@ -623,16 +654,9 @@ class ElectrochemicalTesting(Measurement):
             elif self.samples and we.sample is None:
                 we.sample = self.samples[0]
 
-        # Fill standard potential for reference electrode if known and not set
-        if self.cell and self.cell.reference_electrode:
-            ref = self.cell.reference_electrode
-            if (
-                ref.standard_potential_vs_she is None
-                and ref.reference_type in STANDARD_REFERENCE_POTENTIALS_VS_SHE
-            ):
-                ref.standard_potential_vs_she = (
-                    STANDARD_REFERENCE_POTENTIALS_VS_SHE[ref.reference_type] * ureg.volt
-                )
+        # Normalize cell configuration if present
+        if self.cell:
+            self.cell.normalize(archive, logger)
 
 
 class ElectrochemicalMeasurementResult(MeasurementResult):
@@ -666,12 +690,12 @@ class ElectrochemicalMeasurementResult(MeasurementResult):
         """,
     )
 
-    potential_vs_she = Quantity(
+    potential_vs_rhe = Quantity(
         type=np.float64,
         shape=['*'],
         unit='volt',
         description="""
-        Potential array converted vs. Standard Hydrogen Electrode (SHE).
+        Potential array converted vs. Reversible Hydrogen Electrode (RHE).
         """,
     )
 
@@ -689,8 +713,7 @@ class ElectrochemicalMeasurementResult(MeasurementResult):
         shape=['*'],
         unit=CD_UNIT,
         description="""
-        Electric current series normalized by the (geometric) active surface area
-        of the working electrode.
+        Electric current series normalized by the (geometric) active surface area.
         """,
     )
 
@@ -710,7 +733,9 @@ class VoltammetryParameter(ElectrochemicalMeasurementParameter):
     initial_potential = Quantity(
         type=float,
         unit='volt',
-        description='Starting electric potential of the sweep.',
+        description="""
+        Starting electric potential of the sweep.
+        """,
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.NumberEditQuantity,
             defaultDisplayUnit='volt',
@@ -721,7 +746,9 @@ class VoltammetryParameter(ElectrochemicalMeasurementParameter):
     final_potential = Quantity(
         type=float,
         unit='volt',
-        description='Ending electric potential of the sweep.',
+        description="""
+        Ending electric potential of the sweep.
+        """,
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.NumberEditQuantity,
             defaultDisplayUnit='volt',
@@ -732,7 +759,9 @@ class VoltammetryParameter(ElectrochemicalMeasurementParameter):
     scan_rate = Quantity(
         type=float,
         unit='volt / second',
-        description='Rate of potential change with time.',
+        description="""
+        Rate of potential change with time.
+        """,
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.NumberEditQuantity,
             defaultDisplayUnit='millivolt / second',
@@ -761,13 +790,17 @@ class CVParameter(VoltammetryParameter):
     """
 
     m_def = Section(
-        description='Control and termination parameters for cyclic voltammetry.',
+        description="""
+        Control and termination parameters for cyclic voltammetry.
+        """,
     )
 
     lower_switching_potential = Quantity(
         type=float,
         unit='volt',
-        description='Lower vertex potential where scan direction reverses.',
+        description="""
+        Lower vertex potential where scan direction reverses.
+        """,
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.NumberEditQuantity,
             defaultDisplayUnit='volt',
@@ -778,7 +811,9 @@ class CVParameter(VoltammetryParameter):
     upper_switching_potential = Quantity(
         type=float,
         unit='volt',
-        description='Upper vertex potential where scan direction reverses.',
+        description="""
+        Upper vertex potential where scan direction reverses.
+        """,
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.NumberEditQuantity,
             defaultDisplayUnit='volt',
@@ -814,8 +849,7 @@ class CVParameter(VoltammetryParameter):
 
 class CVCycle(ElectrochemicalMeasurementResult):
     """
-    Data and extracted electrochemical metrics for an individual cycle
-    of a cyclic voltammogram.
+    Data for an individual cycle of a cyclic voltammogram.
     """
 
     m_def = Section(
@@ -831,86 +865,6 @@ class CVCycle(ElectrochemicalMeasurementResult):
         """,
     )
 
-    anodic_peak_potential = Quantity(
-        type=float,
-        unit='volt',
-        description="""
-        Electric potential at the anodic peak maximum (Epa).
-        """,
-    )
-
-    cathodic_peak_potential = Quantity(
-        type=float,
-        unit='volt',
-        description="""
-        Electric potential at the cathodic peak minimum (Epc).
-        """,
-    )
-
-    anodic_peak_current = Quantity(
-        type=float,
-        unit='ampere',
-        description="""
-        Maximum current at the anodic peak (Ipa).
-        """,
-    )
-
-    cathodic_peak_current = Quantity(
-        type=float,
-        unit='ampere',
-        description="""
-        Current at the cathodic peak (Ipc).
-        """,
-    )
-
-    anodic_peak_current_density = Quantity(
-        type=float,
-        unit=CD_UNIT,
-        description="""
-        Maximum current density at the anodic peak (Jpa).
-        """,
-    )
-
-    cathodic_peak_current_density = Quantity(
-        type=float,
-        unit=CD_UNIT,
-        description="""
-        Current density at the cathodic peak (Jpc).
-        """,
-    )
-
-    peak_potential_separation = Quantity(
-        type=float,
-        unit='volt',
-        description="""
-        Separation between anodic and cathodic peak potentials (|Epa - Epc|).
-        """,
-    )
-
-    half_wave_potential = Quantity(
-        type=float,
-        unit='volt',
-        description="""
-        Formal / half-wave potential (E1/2 = (Epa + Epc) / 2).
-        """,
-    )
-
-    anodic_charge = Quantity(
-        type=float,
-        unit='coulomb',
-        description="""
-        Total integrated faradaic/capacitive anodic charge passed during this cycle.
-        """,
-    )
-
-    cathodic_charge = Quantity(
-        type=float,
-        unit='coulomb',
-        description="""
-        Total integrated faradaic/capacitive cathodic charge passed during this cycle.
-        """,
-    )
-
 
 class CVResult(ElectrochemicalMeasurementResult, PlotSection):
     """
@@ -923,13 +877,17 @@ class CVResult(ElectrochemicalMeasurementResult, PlotSection):
     """
 
     m_def = Section(
-        description='Result section for cyclic voltammetry measurements.',
+        description="""
+        Result section for cyclic voltammetry measurements.
+        """,
     )
 
     cycles = SubSection(
         section_def=CVCycle,
         repeats=True,
-        description='Individual segmented cycles of the cyclic voltammetry experiment.',
+        description="""
+        Individual segmented cycles of the cyclic voltammetry experiment.
+        """,
     )
 
     cycle_index = Quantity(
@@ -940,29 +898,55 @@ class CVResult(ElectrochemicalMeasurementResult, PlotSection):
         """,
     )
 
+    scan_rate = Quantity(
+        type=float,
+        unit='volt / second',
+        description='Scan rate of the cyclic voltammetric sweep.',
+    )
+
 
 class Voltammetry(ElectrochemicalTesting):
     """
     Voltammetric measurement where the potential of the working electrode is varied
     while recording the resulting current.
+
+    Ontology:
+        chameo:Voltammetry
+        (https://w3id.org/emmo/domain/characterisation-methodology/chameo#Voltammetry)
     """
 
     m_def = Section(
         description='General voltammetric measurement section.',
     )
 
-    instrument = SubSection(
+    potentiostat = SubSection(
         section_def=PotentiostatReference,
         description="""
-        The potentiostat used to conduct the voltammetry experiment
-        (echem:hasTestEquipment).
+        The potentiostat used to conduct the voltammetry experiment.
         """,
     )
 
     parameters = SubSection(
         section_def=VoltammetryParameter,
-        description='Parameters of the voltammetric sweep.',
+        description="""
+        Parameters of the voltammetric sweep.
+        """,
     )
+
+    def normalize(self, archive: 'EntryArchive', logger: 'BoundLogger') -> None:
+        """
+        Normalizer for base Voltammetry measurement.
+        - Synchronizes the Measurement.instruments list with
+        the potentiostat.
+        """
+        super().normalize(archive, logger)
+
+        # Synchronize the potentiostat with the Measurement.instruments list
+        if self.potentiostat:
+            if self.instruments is None:
+                self.instruments = [self.potentiostat]
+            elif self.potentiostat not in self.instruments:
+                self.instruments.append(self.potentiostat)
 
 
 class CyclicVoltammetry(Voltammetry, EntryData):
@@ -970,552 +954,246 @@ class CyclicVoltammetry(Voltammetry, EntryData):
     Cyclic Voltammetry (CV) measurement.
     Sweeps the potential of the working electrode triangularly between vertex potentials
     while measuring the resulting current response over one or multiple cycles.
+
+    Ontology:
+        chameo:CyclicVoltammetry
+        (https://w3id.org/emmo/domain/characterisation-methodology/chameo#CyclicVoltammetry)
     """
 
     m_def = Section(
         categories=[ElectrochemicalTestingCategory],
-        description='Cyclic voltammetry measurement entry schema.',
+        description="""
+        Cyclic voltammetry measurement entry schema.
+        """,
     )
 
     parameters = SubSection(
         section_def=CVParameter,
-        description='Control and termination parameters for the cyclic sweep.',
+        description="""
+        Control and termination parameters for the cyclic sweep.
+        """,
     )
 
     results = SubSection(
         section_def=CVResult,
         repeats=True,
-        description='Extracted cyclic voltammetry data and results.',
+        description="""
+        Extracted cyclic voltammetry data and results.
+        """,
     )
-
-    def _calculate_peaks_and_metrics(
-        self,
-        cycle: CVCycle,
-        v_arr: np.ndarray,
-        i_arr: np.ndarray,
-        j_arr: np.ndarray | None,
-        t_arr: np.ndarray | None,
-    ) -> None:
-        """Helper to find peaks and compute cycle metrics."""
-        if (
-            len(v_arr) < MIN_POINTS_FOR_PEAK_DETECTION
-            or len(i_arr) < MIN_POINTS_FOR_PEAK_DETECTION
-        ):
-            return
-
-        # Anodic peak (local maximum)
-        pos_peaks, _ = find_peaks(i_arr)
-        if len(pos_peaks) > 0:
-            best_pos = pos_peaks[np.argmax(i_arr[pos_peaks])]
-            cycle.anodic_peak_potential = float(v_arr[best_pos]) * ureg.volt
-            cycle.anodic_peak_current = float(i_arr[best_pos]) * ureg.ampere
-            if j_arr is not None:
-                cycle.anodic_peak_current_density = float(j_arr[best_pos]) * (
-                    ureg.milliampere / (ureg.centimeter**2)
-                )
-
-        # Cathodic peak (local minimum / most negative current)
-        neg_peaks, _ = find_peaks(-i_arr)
-        if len(neg_peaks) > 0:
-            best_neg = neg_peaks[np.argmax(-i_arr[neg_peaks])]
-            cycle.cathodic_peak_potential = float(v_arr[best_neg]) * ureg.volt
-            cycle.cathodic_peak_current = float(i_arr[best_neg]) * ureg.ampere
-            if j_arr is not None:
-                cycle.cathodic_peak_current_density = float(j_arr[best_neg]) * (
-                    ureg.milliampere / (ureg.centimeter**2)
-                )
-
-        # Peak separation and half-wave potential
-        if (
-            cycle.anodic_peak_potential is not None
-            and cycle.cathodic_peak_potential is not None
-        ):
-            epa = cycle.anodic_peak_potential.to('volt').magnitude
-            epc = cycle.cathodic_peak_potential.to('volt').magnitude
-            cycle.peak_potential_separation = abs(epa - epc) * ureg.volt
-            cycle.half_wave_potential = ((epa + epc) / 2.0) * ureg.volt
-
-        # Integrated charge
-        if t_arr is not None and len(t_arr) == len(i_arr):
-            dt = np.gradient(t_arr)
-            pos_mask = i_arr > 0
-            neg_mask = i_arr < 0
-            cycle.anodic_charge = (
-                float(np.sum(i_arr[pos_mask] * dt[pos_mask])) * ureg.coulomb
-            )
-            cycle.cathodic_charge = (
-                float(abs(np.sum(i_arr[neg_mask] * dt[neg_mask]))) * ureg.coulomb
-            )
-
-    def _generate_plotly_figures(
-        self, result: CVResult, use_density: bool
-    ) -> list[PlotlyFigure]:
-        """Generate interactive Plotly figures for CV voltammogram and time series."""
-        figures = []
-        if not result.cycles and (result.potential is None or result.current is None):
-            return figures
-
-        y_label = 'Current Density (mA/cm²)' if use_density else 'Current (mA)'
-
-        # 1. Voltammogram (I-V or J-V)
-        fig_cv = go.Figure()
-        if result.cycles:
-            for cyc in result.cycles:
-                if cyc.potential is None or cyc.current is None:
-                    continue
-                cyc_v = np.asarray(cyc.potential.to('volt').magnitude)
-                cyc_y = np.asarray(
-                    cyc.current_density.to(CD_UNIT).magnitude
-                    if use_density and cyc.current_density is not None
-                    else cyc.current.to(C_UNIT).magnitude
-                )
-                cyc_name = (
-                    f'Cycle {cyc.cycle_index}'
-                    if cyc.cycle_index is not None
-                    else 'Voltammogram'
-                )
-                fig_cv.add_trace(
-                    go.Scatter(
-                        x=cyc_v,
-                        y=cyc_y,
-                        mode='lines',
-                        name=cyc_name,
-                    )
-                )
-        elif result.potential is not None and result.current is not None:
-            v_data = np.asarray(result.potential.to('volt').magnitude)
-            y_data = np.asarray(
-                result.current_density.to(CD_UNIT).magnitude
-                if use_density and result.current_density is not None
-                else result.current.to(C_UNIT).magnitude
-            )
-            fig_cv.add_trace(
-                go.Scatter(
-                    x=v_data,
-                    y=y_data,
-                    mode='lines',
-                    name='Voltammogram',
-                )
-            )
-
-        fig_cv.update_layout(
-            title='Cyclic Voltammogram',
-            xaxis_title='Potential vs. Reference (V)',
-            yaxis_title=y_label,
-            hovermode='closest',
-            template='plotly_white',
-        )
-        figures.append(
-            PlotlyFigure(
-                label='Cyclic Voltammogram',
-                figure=fig_cv.to_plotly_json(),
-            )
-        )
-
-        # 2. Time series (E(t) and I(t))
-        fig_time = go.Figure()
-        has_time = False
-        if (
-            result.time is not None
-            and result.potential is not None
-            and result.current is not None
-        ):
-            has_time = True
-            t_data = np.asarray(result.time.to('second').magnitude)
-            v_data = np.asarray(result.potential.to('volt').magnitude)
-            y_data = np.asarray(
-                result.current_density.to(CD_UNIT).magnitude
-                if use_density and result.current_density is not None
-                else result.current.to(C_UNIT).magnitude
-            )
-            fig_time.add_trace(
-                go.Scatter(
-                    x=t_data,
-                    y=v_data,
-                    mode='lines',
-                    name='Potential (V)',
-                    yaxis='y1',
-                )
-            )
-            fig_time.add_trace(
-                go.Scatter(
-                    x=t_data,
-                    y=y_data,
-                    mode='lines',
-                    name=y_label,
-                    yaxis='y2',
-                )
-            )
-        elif result.cycles:
-            for cyc in result.cycles:
-                if (
-                    cyc.time is not None
-                    and cyc.potential is not None
-                    and cyc.current is not None
-                ):
-                    has_time = True
-                    cyc_t = np.asarray(cyc.time.to('second').magnitude)
-                    cyc_v = np.asarray(cyc.potential.to('volt').magnitude)
-                    cyc_y = np.asarray(
-                        cyc.current_density.to(CD_UNIT).magnitude
-                        if use_density and cyc.current_density is not None
-                        else cyc.current.to(C_UNIT).magnitude
-                    )
-                    suffix = (
-                        f' (Cycle {cyc.cycle_index})'
-                        if len(result.cycles) > 1 and cyc.cycle_index is not None
-                        else ''
-                    )
-                    fig_time.add_trace(
-                        go.Scatter(
-                            x=cyc_t,
-                            y=cyc_v,
-                            mode='lines',
-                            name=f'Potential (V){suffix}',
-                            yaxis='y1',
-                        )
-                    )
-                    fig_time.add_trace(
-                        go.Scatter(
-                            x=cyc_t,
-                            y=cyc_y,
-                            mode='lines',
-                            name=f'{y_label}{suffix}',
-                            yaxis='y2',
-                        )
-                    )
-
-        if has_time:
-            fig_time.update_layout(
-                title='Chrono-Response (Potential & Current vs. Time)',
-                xaxis_title='Time (s)',
-                yaxis=dict(title='Potential (V)', side='left'),
-                yaxis2=dict(title=y_label, side='right', overlaying='y'),
-                template='plotly_white',
-            )
-            figures.append(
-                PlotlyFigure(
-                    label='Potential & Current vs. Time',
-                    figure=fig_time.to_plotly_json(),
-                )
-            )
-
-        return figures
-
-    def _normalize_continuous_current_density(
-        self, result: CVResult, surface_area: float | None
-    ) -> None:
-        """
-        Compute current density series on CVResult if electrode
-        surface area is known.
-        """
-        if (
-            surface_area
-            and surface_area > 0
-            and result.current is not None
-            and result.current_density is None
-        ):
-            current_arr = np.asarray(result.current.to('ampere').magnitude, dtype=float)
-            result.current_density = ((current_arr / surface_area) * 1000.0) * (
-                ureg.milliampere / (ureg.centimeter**2)
-            )
-
-    def _normalize_continuous_potential_vs_she(
-        self,
-        result: CVResult,
-        ref_potential_she: float | None,
-        ph_val: float | None,
-    ) -> None:
-        """
-        Convert potential series to SHE/RHE on CVResult if reference
-        potential and pH are known.
-        """
-        if (
-            ref_potential_she is not None
-            and ph_val is not None
-            and result.potential is not None
-            and result.potential_vs_she is None
-        ):
-            potential_arr = np.asarray(
-                result.potential.to('volt').magnitude, dtype=float
-            )
-            result.potential_vs_she = (
-                potential_arr + ref_potential_she + (0.05916 * ph_val)
-            ) * ureg.volt
-
-    def _auto_decompose_cycles(  # noqa: PLR0912, PLR0915
-        self,
-        result: CVResult,
-    ) -> None:
-        """
-        Auto-decompose contiguous data into CVCycle segments if
-        cycles are not provided.
-        """
-        if result.cycles or result.potential is None or result.current is None:
-            return
-
-        potential_arr = np.asarray(result.potential.to('volt').magnitude, dtype=float)
-        current_arr = np.asarray(result.current.to('ampere').magnitude, dtype=float)
-        time_arr = (
-            np.asarray(result.time.to('second').magnitude, dtype=float)
-            if result.time is not None
-            else None
-        )
-        j_arr = (
-            np.asarray(
-                result.current_density.to(CD_UNIT).magnitude,
-                dtype=float,
-            )
-            if result.current_density is not None
-            else None
-        )
-        v_she = (
-            np.asarray(result.potential_vs_she.to('volt').magnitude, dtype=float)
-            if result.potential_vs_she is not None
-            else None
-        )
-
-        if result.cycle_index is not None and len(result.cycle_index) == len(
-            potential_arr
-        ):
-            c_indices = np.asarray(result.cycle_index)
-            unique_cycles = np.unique(c_indices)
-            for c_val in unique_cycles:
-                mask = c_indices == c_val
-                cyc = CVCycle(
-                    cycle_index=int(c_val),
-                    potential=potential_arr[mask] * ureg.volt,
-                    current=current_arr[mask] * ureg.ampere,
-                )
-                if time_arr is not None:
-                    cyc.time = time_arr[mask] * ureg.second
-                if j_arr is not None:
-                    cyc.current_density = j_arr[mask] * (
-                        ureg.milliampere / (ureg.centimeter**2)
-                    )
-                if v_she is not None:
-                    cyc.potential_vs_she = v_she[mask] * ureg.volt
-                result.cycles.append(cyc)
-        elif len(potential_arr) > MIN_POINTS_FOR_CYCLE_SPLIT:
-            diffs = np.diff(potential_arr)
-            signs = np.sign(diffs)
-            signs = np.where(signs == 0, 1, signs)
-            turning_points = np.where(np.diff(signs) != 0)[0] + 1
-
-            cycle_breaks = [0]
-            for i in range(1, len(turning_points), 2):
-                cycle_breaks.append(turning_points[i])
-            if cycle_breaks[-1] != len(potential_arr):
-                cycle_breaks.append(len(potential_arr))
-
-            cycle_index_arr = np.zeros(len(potential_arr), dtype=int)
-            for c_idx in range(len(cycle_breaks) - 1):
-                start_i = cycle_breaks[c_idx]
-                end_i = cycle_breaks[c_idx + 1]
-                if end_i - start_i < MIN_CYCLE_LENGTH:
-                    continue
-
-                cycle_num = len(result.cycles) + 1
-                cycle_index_arr[start_i:end_i] = cycle_num
-
-                cyc = CVCycle(
-                    cycle_index=cycle_num,
-                    potential=potential_arr[start_i:end_i] * ureg.volt,
-                    current=current_arr[start_i:end_i] * ureg.ampere,
-                )
-                if time_arr is not None:
-                    cyc.time = time_arr[start_i:end_i] * ureg.second
-                if j_arr is not None:
-                    cyc.current_density = j_arr[start_i:end_i] * (
-                        ureg.milliampere / (ureg.centimeter**2)
-                    )
-                if v_she is not None:
-                    cyc.potential_vs_she = v_she[start_i:end_i] * ureg.volt
-                result.cycles.append(cyc)
-
-            if result.cycle_index is None and len(result.cycles) > 0:
-                result.cycle_index = cycle_index_arr
-        else:
-            cyc = CVCycle(
-                cycle_index=1,
-                potential=potential_arr * ureg.volt,
-                current=current_arr * ureg.ampere,
-            )
-            if time_arr is not None:
-                cyc.time = time_arr * ureg.second
-            if j_arr is not None:
-                cyc.current_density = j_arr * (ureg.milliampere / (ureg.centimeter**2))
-            if v_she is not None:
-                cyc.potential_vs_she = v_she * ureg.volt
-            result.cycles.append(cyc)
-            if result.cycle_index is None:
-                result.cycle_index = np.ones(len(potential_arr), dtype=int)
-
-    def _normalize_and_evaluate_cycles(
-        self,
-        result: CVResult,
-        surface_area: float | None,
-        ref_potential_she: float | None,
-        ph_val: float | None,
-    ) -> None:
-        """
-        Normalize individual cycles and extract redox peak parameters.
-        """
-        if not result.cycles:
-            return
-
-        for cyc in result.cycles:
-            if cyc.current is None or cyc.potential is None:
-                continue
-
-            c_v = np.asarray(cyc.potential.to('volt').magnitude, dtype=float)
-            c_i = np.asarray(cyc.current.to('ampere').magnitude, dtype=float)
-            c_t = (
-                np.asarray(cyc.time.to('second').magnitude, dtype=float)
-                if cyc.time is not None
-                else None
-            )
-
-            # Current density normalization on cycle
-            if surface_area and surface_area > 0 and cyc.current_density is None:
-                c_j = (c_i / surface_area) * 1000.0
-                cyc.current_density = c_j * (ureg.milliampere / (ureg.centimeter**2))
-            elif cyc.current_density is not None:
-                c_j = np.asarray(
-                    cyc.current_density.to(CD_UNIT).magnitude,
-                    dtype=float,
-                )
-            else:
-                c_j = None
-
-            # Potential vs SHE conversion on cycle
-            if (
-                ref_potential_she is not None
-                and ph_val is not None
-                and cyc.potential_vs_she is None
-            ):
-                cyc.potential_vs_she = (
-                    c_v + ref_potential_she + (0.05916 * ph_val)
-                ) * ureg.volt
-
-            # Calculate peaks and cycle metrics (ONLY in CVCycle)
-            self._calculate_peaks_and_metrics(cyc, c_v, c_i, c_j, c_t)
-
-    def _populate_continuous_data_from_cycles(self, result: CVResult) -> None:
-        """
-        Concatenate cycle arrays to populate continuous fields on
-        CVResult if not present.
-        """
-        if result.potential is not None or not result.cycles:
-            return
-
-        all_v = []
-        all_i = []
-        all_t = []
-        all_j = []
-        all_she = []
-        all_idx = []
-
-        has_times = all(cyc.time is not None for cyc in result.cycles)
-        has_j = all(cyc.current_density is not None for cyc in result.cycles)
-        has_she = all(cyc.potential_vs_she is not None for cyc in result.cycles)
-
-        for cyc in result.cycles:
-            if cyc.potential is None or cyc.current is None:
-                continue
-            n_pts = len(cyc.potential)
-            all_v.append(np.asarray(cyc.potential.to('volt').magnitude))
-            all_i.append(np.asarray(cyc.current.to('ampere').magnitude))
-            c_num = cyc.cycle_index if cyc.cycle_index is not None else 1
-            all_idx.append(np.full(n_pts, c_num, dtype=int))
-            if has_times and cyc.time is not None:
-                all_t.append(np.asarray(cyc.time.to('second').magnitude))
-            if has_j and cyc.current_density is not None:
-                all_j.append(np.asarray(cyc.current_density.to(CD_UNIT).magnitude))
-            if has_she and cyc.potential_vs_she is not None:
-                all_she.append(np.asarray(cyc.potential_vs_she.to('volt').magnitude))
-
-        if all_v:
-            result.potential = np.concatenate(all_v) * ureg.volt
-            result.current = np.concatenate(all_i) * ureg.ampere
-            if result.cycle_index is None:
-                result.cycle_index = np.concatenate(all_idx)
-            if all_t:
-                result.time = np.concatenate(all_t) * ureg.second
-            if all_j:
-                result.current_density = np.concatenate(all_j) * (
-                    ureg.milliampere / (ureg.centimeter**2)
-                )
-            if all_she:
-                result.potential_vs_she = np.concatenate(all_she) * ureg.volt
 
     def normalize(self, archive: 'EntryArchive', logger: 'BoundLogger') -> None:
         """
         Normalizer for CyclicVoltammetry:
-        1. Synchronizes samples and fills reference defaults via super().
-        2. Computes current density if surface_area of working electrode is given.
-        3. Computes potential vs. SHE if pH and reference standard are given.
-        4. Auto-decomposes contiguous data into CVCycle segments if not set,
-           populating result.cycles and result.cycle_index.
-        5. Detects anodic/cathodic peaks and formal redox potentials for each cycle.
-        6. Renders interactive Plotly voltammograms in PlotSection.
+        Synchronizes cell defaults via super().normalize() and invokes
+        the decoupled CV normalizer for all results.
         """
         super().normalize(archive, logger)
+        normalize_cyclic_voltammetry(self, archive, logger)
 
-        surface_area_val = None
-        if (
-            self.cell
-            and self.cell.working_electrode
-            and self.cell.working_electrode.surface_area
-        ):
-            surface_area_val = self.cell.working_electrode.surface_area.to(
-                'centimeter ** 2'
-            ).magnitude
 
-        ref_potential_she = None
-        if (
-            self.cell
-            and self.cell.reference_electrode
-            and self.cell.reference_electrode.standard_potential_vs_she
-        ):
-            ref_potential_she = (
-                self.cell.reference_electrode.standard_potential_vs_she.to(
-                    'volt'
-                ).magnitude
-            )
+class ECSAParameter(ElectrochemicalMeasurementParameter):
+    """
+    Control parameters for ECSA measurements across multiple scan rates.
+    """
 
-        ph_val = None
-        if (
-            self.cell
-            and self.cell.electrolyte
-            and self.cell.electrolyte.ph_value is not None
-        ):
-            ph_val = float(self.cell.electrolyte.ph_value)
+    m_def = Section(
+        description="""
+        Control parameters for ECSA measurements across multiple scan rates.
+        """,
+    )
 
-        for result in self.results:
-            # 1. Continuous current density normalization on CVResult
-            self._normalize_continuous_current_density(result, surface_area_val)
+    runs = SubSection(
+        section_def=CVParameter,
+        repeats=True,
+        description="""
+        Parameters for the individual cyclic voltammetry sweeps.
+        """,
+    )
 
-            # 2. Continuous SHE/RHE conversion on CVResult
-            self._normalize_continuous_potential_vs_she(
-                result, ref_potential_she, ph_val
-            )
 
-            # 3. Auto-decompose continuous data into CVCycle segments if not provided
-            self._auto_decompose_cycles(result)
+class ECSAResult(ElectrochemicalMeasurementResult, PlotSection):
+    """
+    Result section for ECSA measurements containing individual cyclic voltammetry
+    sweeps across different scan rates, capacitive charging currents,
+    and extracted double-layer capacitance metrics.
+    """
 
-            # 4. Normalize individual cycles and calculate metrics in CVCycle
-            self._normalize_and_evaluate_cycles(
-                result, surface_area_val, ref_potential_she, ph_val
-            )
+    m_def = Section(
+        description="""
+        Result section for ECSA multi-scan rate sweeps and capacitance.
+        """,
+    )
 
-            # 5. Populate continuous arrays on CVResult from cycles if not present
-            self._populate_continuous_data_from_cycles(result)
+    runs = SubSection(
+        section_def=CVResult,
+        repeats=True,
+        description="""
+        Individual cyclic voltammetry sweeps at different scan rates.
+        """,
+    )
 
-            # 6. Generate Plotly figures
-            result.figures = self._generate_plotly_figures(
-                result, use_density=(surface_area_val is not None)
-            )
+    scan_rates = Quantity(
+        type=np.float64,
+        shape=['*'],
+        unit='volt / second',
+        description="""
+        Scan rates of the individual CV sweeps.
+        """,
+    )
+
+    charging_currents = Quantity(
+        type=np.float64,
+        shape=['*'],
+        unit='ampere',
+        description="""
+        Capacitive charging currents evaluated at center potential.
+        """,
+    )
+
+    double_layer_capacitance = Quantity(
+        type=float,
+        unit='farad',
+        description="""
+        Double layer capacitance (Cdl) from charging current slope.
+        """,
+    )
+
+    specific_capacitance = Quantity(
+        type=float,
+        unit='farad / centimeter ** 2',
+        description="""
+        Specific capacitance (Cs) of a flat surface of the material, 
+        used to calculate ECSA.
+        """,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            defaultDisplayUnit='microfarad / centimeter ** 2',
+            label='Specific Capacitance (Cs)',
+        ),
+    )
+
+    electrochemical_surface_area = Quantity(
+        type=float,
+        unit='centimeter ** 2',
+        description="""
+        Electrochemically active surface area (ECSA = Cdl / Cs).
+        """,
+    )
+
+    def normalize(self, archive: 'EntryArchive', logger: 'BoundLogger') -> None:
+        """
+        Evaluate Cdl from CV runs and generate Plotly figures
+        via decoupled normalizer.
+        """
+        super().normalize(archive, logger)
+        normalize_ecsa_result(self)
+
+
+class ECSAMeasurement(ElectrochemicalTesting, EntryData):
+    """
+    Electrochemically Active Surface Area (ECSA) measurement entry.
+    Sweeps cyclic voltammograms across multiple scan rates within a capacitive
+    double-layer potential window to determine double-layer capacitance (Cdl)
+    and electrochemical surface area (ECSA).
+    """
+
+    m_def = Section(
+        categories=[ElectrochemicalTestingCategory],
+        description="""
+        ECSA measurement entry schema.
+        """,
+    )
+
+    parameters = SubSection(
+        section_def=ECSAParameter,
+        description="""
+        Parameters governing the individual ECSA CV sweeps.
+        """,
+    )
+
+    results = SubSection(
+        section_def=ECSAResult,
+        repeats=True,
+        description="""
+        Results of the ECSA measurement.
+        """,
+    )
+
+    def normalize(self, archive: 'EntryArchive', logger: 'BoundLogger') -> None:
+        """Normalizer for ECSA measurement entry delegating to decoupled normalizer."""
+        super().normalize(archive, logger)
+        normalize_ecsa_measurement(self, archive, logger)
+
+
+class ElectrochemicalMappingResult(MappingResult, ElectrochemicalMeasurementResult):
+    """
+    Electrochemical characterization results at a single mapped spatial point.
+    Directly interfaces ElectrochemicalMeasurementResult and MappingResult,
+    combining spatial stage coordinates with electrochemical response series.
+    """
+
+    m_def = Section(
+        description="""
+        Electrochemical results at a single mapped spatial point.
+        """,
+    )
+
+
+class CVMappingResult(CVResult, ElectrochemicalMappingResult):
+    """
+    Cyclic voltammetry result at a mapped spatial point.
+    """
+
+    m_def = Section(
+        description="""
+        Cyclic voltammetry result at a single mapped spatial point.
+        """,
+    )
+
+
+class ECSAMappingResult(ECSAResult, ElectrochemicalMappingResult):
+    """
+    ECSA measurement result at a mapped spatial point.
+    """
+
+    m_def = Section(
+        description="""
+        ECSA result at a single mapped spatial point.
+        """,
+    )
+
+
+class ElectrochemicalMapping(MappingMeasurement, ElectrochemicalTesting, EntryData):
+    """
+    Electrochemical characterization mapping across multiple sample surface positions.
+    Combines spatial stage alignment and coordinate mapping with electrochemical cell
+    configuration and measurements at each mapped point.
+    """
+
+    m_def = Section(
+        categories=[ElectrochemicalTestingCategory],
+        description="""
+        Electrochemical mapping across multiple sample surface positions.
+        """,
+    )
+
+    results = SubSection(
+        section_def=ElectrochemicalMappingResult,
+        repeats=True,
+        description="""
+        List of electrochemical results at mapped spatial positions.
+        """,
+    )
+
+    def normalize(self, archive: 'EntryArchive', logger: 'BoundLogger') -> None:
+        """
+        Normalizer for ElectrochemicalMapping:
+        1. Calculates relative sample coordinates via MappingMeasurement.
+        2. Synchronizes sample and reference potentials via ElectrochemicalTesting.
+        Ingests pre-normalized results without performing measurement normalizations.
+        """
+        super().normalize(archive, logger)
 
 
 m_package.__init_metainfo__()

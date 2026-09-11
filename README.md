@@ -54,7 +54,7 @@ where the `-s` and `-v` options toggle the output verbosity.
 
 Our CI/CD pipeline produces a more comprehensive test report using the `pytest-cov` package. You can generate a local coverage report by injecting it into the runtime environment:
 ```sh
-uv run --with pytest-cov pytest --cov=src tests
+uv run --with pytest-cov pytest --cov=src --cov-report=term-missing tests
 ```
 
 ### Debugging
