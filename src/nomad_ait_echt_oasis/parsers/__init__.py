@@ -28,6 +28,5 @@ class XYPECParserEntryPoint(ParserEntryPoint):
 xy_pec_parser = XYPECParserEntryPoint(
     name='XYPECParser',
     description='Parser for NOMAD CAMELS XY-PEC measurement files.',
-    mainfile_name_re=r'^.*\.h5$',
-    mainfile_mime_re=r'(application/x-hdf)',
+    mainfile_name_re=r'^.*\.(h5|hdf5|nxs)$',
 )

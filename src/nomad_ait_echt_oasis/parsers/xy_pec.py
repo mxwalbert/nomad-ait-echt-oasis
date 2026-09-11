@@ -66,8 +66,7 @@ class XYPECParser(MatchingParser):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._mainfile_mime_re = re.compile(r'(application/x-hdf)')
-        self._mainfile_name_re = re.compile(r'^.*\.h5$')
+        self._mainfile_name_re = re.compile(r'^.*\.(h5|hdf5|nxs)$')
 
     def is_mainfile(
         self,
