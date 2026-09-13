@@ -16,7 +16,10 @@ def get_quantity_array(
     if qty is None:
         return None
     try:
-        val = qty.to(unit).magnitude if unit else getattr(qty, 'magnitude', qty)
+        if unit and hasattr(qty, 'to'):
+            val = qty.to(unit).magnitude
+        else:
+            val = getattr(qty, 'magnitude', qty)
         arr = np.asarray(val, dtype=dtype)
         return arr if arr.size > 0 else None
     except Exception:
@@ -34,7 +37,10 @@ def get_quantity_scalar(
     if qty is None:
         return None
     try:
-        val = qty.to(unit).magnitude if unit else getattr(qty, 'magnitude', qty)
+        if unit and hasattr(qty, 'to'):
+            val = qty.to(unit).magnitude
+        else:
+            val = getattr(qty, 'magnitude', qty)
         return float(val)
     except Exception:
         return None

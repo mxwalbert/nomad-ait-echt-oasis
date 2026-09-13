@@ -12,8 +12,10 @@ from nomad_ait_echt_oasis.parsers.xy_pec import (
     _extract_legacy_var,
 )
 from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
+    CVParameter,
     CVResult,
     CyclicVoltammetry,
+    ECSAParameter,
     ECSAResult,
     ECSAMeasurement,
     ElectrochemicalMapping,
@@ -70,8 +72,15 @@ def test_xy_pec_parser():
         assert cv_map.y_absolute is not None
         cv = cv_map.reference
         assert isinstance(cv, CyclicVoltammetry)
+        assert isinstance(cv.parameters, CVParameter)
+        assert cv.parameters.initial_potential is not None
+        assert cv.parameters.lower_switching_potential is not None
+        assert cv.parameters.upper_switching_potential is not None
+        assert cv.parameters.scan_rate is not None
+        assert cv.parameters.number_of_cycles is not None
         cv_result = cv.results[0]
         assert isinstance(cv_result, CVResult)
+        assert cv_result.scan_rate is not None
         assert len(cv_result.cycles) > 0
         assert len(cv_result.figures) == EXPECTED_FIGURES
 
@@ -82,11 +91,21 @@ def test_xy_pec_parser():
         assert ecsa_map.y_absolute is not None
         ecsa = ecsa_map.reference
         assert isinstance(ecsa, ECSAMeasurement)
+        assert isinstance(ecsa.parameters, ECSAParameter)
+        assert len(ecsa.parameters.runs) == EXPECTED_ECSA_RUNS
+        for run_param in ecsa.parameters.runs:
+            assert isinstance(run_param, CVParameter)
+            assert run_param.scan_rate is not None
+            assert run_param.lower_switching_potential is not None
+            assert run_param.upper_switching_potential is not None
         ecsa_result = ecsa.results[0]
         assert isinstance(ecsa_result, ECSAResult)
         assert ecsa_result.double_layer_capacitance is not None
         assert len(ecsa_result.figures) == EXPECTED_ECSA_FIGURES
         assert len(ecsa_result.runs[0].figures) == EXPECTED_FIGURES
+        for run_cv in ecsa_result.runs:
+            assert isinstance(run_cv, CVResult)
+            assert run_cv.scan_rate is not None
 
 
 def test_decode_val():
@@ -429,3 +448,102 @@ def test_parser_sample_reference_edge_cases(tmp_path):
             assert len(data.samples) == 1
             assert data.samples[0].name == 'SAMPLE-NAME-88'
             assert cv.cell.working_electrode.sample == data.samples[0]
+
+
+def test_parse_cv_and_ecsa_parameters(tmp_path):
+    """Test parsing CVParameter and ECSAParameter from CyclicVoltammetryLegacy_variable_signal."""
+    parser = XYPECParser()
+    logger = logging.getLogger('test_xy_pec')
+
+    h5_file = tmp_path / 'params_test.h5'
+    with h5py.File(h5_file, 'w') as f:
+        entry = f.create_group('CAMELS_entry')
+        data_grp = entry.create_group('data')
+        data_grp.create_group('ScreeningLoop_variable_signal')
+        primary = data_grp.create_group('primary')
+        sub = primary.create_group('Subprotocol_RunSubprotocol_0')
+        sub.create_group('SinglePointCVfromReservoir_variable_signal')
+
+        # CV with legacy variable signal containing all parameters
+        cv_grp = sub.create_group('Subprotocol_CyclicVoltammetry')
+        v_cv = np.array([0.0, 0.5, 1.0, 0.5, 0.0])
+        i_cv = np.array([1e-4, 2e-4, 3e-4, 1e-4, 0.0])
+        cv_grp.create_dataset('matterlab_potentiostat_read_potential', data=v_cv)
+        cv_grp.create_dataset('matterlab_potentiostat_read_current', data=i_cv)
+        cv_grp.create_dataset('time', data=np.array([0.0, 1.0, 2.0, 3.0, 4.0]))
+
+        cv_sig = cv_grp.create_group('CyclicVoltammetryLegacy_variable_signal')
+        cv_sig.create_dataset('start_v', data=np.array([0.0]))
+        cv_sig.create_dataset('stop_v', data=np.array([0.0]))
+        cv_sig.create_dataset('min_v', data=np.array([0.0]))
+        cv_sig.create_dataset('max_v', data=np.array([1.0]))
+        cv_sig.create_dataset('num_cycles', data=np.array([3]))
+        cv_sig.create_dataset('scan_rate_mvpers', data=np.array([50.0]))
+        cv_sig.create_dataset('Screening_Count', data=np.array([1]))
+        cv_sig.create_dataset('Screening_Value', data=np.array([0.5]))
+        cv_sig.create_dataset('scan_rate_cal_a', data=np.array([1.0]))
+        cv_sig.create_dataset('scan_rate_cal_b', data=np.array([0.0]))
+        cv_sig.create_dataset('scan_rate_cal_c', data=np.array([0.0]))
+        cv_sig.create_dataset('scan_rate_cal_pair', data=np.array([1.0]))
+
+        # ECSA with 2 RunCV subprotocols each having CyclicVoltammetryLegacy_variable_signal
+        ecsa_grp = sub.create_group('Subprotocol_ECSA')
+        for idx, sr_val in enumerate([20.0, 100.0]):
+            r_grp = ecsa_grp.create_group(f'Subprotocol_RunCV_{idx}')
+            r_grp.create_dataset('matterlab_potentiostat_read_potential', data=v_cv)
+            r_grp.create_dataset('matterlab_potentiostat_read_current', data=i_cv)
+            r_grp.create_dataset('time', data=np.array([0.0, 1.0, 2.0, 3.0, 4.0]))
+
+            r_sig = r_grp.create_group('CyclicVoltammetryLegacy_variable_signal')
+            r_sig.create_dataset('start_v', data=np.array([0.2]))
+            r_sig.create_dataset('stop_v', data=np.array([0.2]))
+            r_sig.create_dataset('min_v', data=np.array([0.1]))
+            r_sig.create_dataset('max_v', data=np.array([0.8]))
+            r_sig.create_dataset('num_cycles', data=np.array([2]))
+            r_sig.create_dataset('scan_rate_mvpers', data=np.array([sr_val]))
+
+    archive = EntryArchive(metadata=EntryMetadata(entry_name='params_test'))
+    parser.parse(str(h5_file), archive, logger)
+
+    data = archive.data
+    assert len(data.results) == 2
+
+    # Check CV
+    cv = data.results[0].reference
+    assert isinstance(cv, CyclicVoltammetry)
+    assert isinstance(cv.parameters, CVParameter)
+    assert cv.parameters.initial_potential.to('volt').magnitude == pytest.approx(0.0)
+    assert cv.parameters.final_potential.to('volt').magnitude == pytest.approx(0.0)
+    assert cv.parameters.lower_switching_potential.to('volt').magnitude == pytest.approx(0.0)
+    assert cv.parameters.upper_switching_potential.to('volt').magnitude == pytest.approx(1.0)
+    assert cv.parameters.number_of_cycles == 3
+    assert cv.parameters.scan_rate.to('millivolt / second').magnitude == pytest.approx(50.0)
+    assert cv.parameters.initial_scan_direction == 'positive'
+    cv_res = cv.results[0]
+    assert cv_res.scan_rate is not None
+    assert cv_res.scan_rate.to('volt / second').magnitude == pytest.approx(0.5)
+
+    # Check ECSA
+    ecsa = data.results[1].reference
+    assert isinstance(ecsa, ECSAMeasurement)
+    assert isinstance(ecsa.parameters, ECSAParameter)
+    assert len(ecsa.parameters.runs) == 2
+
+    r0_param = ecsa.parameters.runs[0]
+    assert isinstance(r0_param, CVParameter)
+    assert r0_param.scan_rate.to('millivolt / second').magnitude == pytest.approx(20.0)
+    assert r0_param.initial_potential.to('volt').magnitude == pytest.approx(0.2)
+    assert r0_param.final_potential.to('volt').magnitude == pytest.approx(0.2)
+    assert r0_param.lower_switching_potential.to('volt').magnitude == pytest.approx(0.1)
+    assert r0_param.upper_switching_potential.to('volt').magnitude == pytest.approx(0.8)
+    assert r0_param.number_of_cycles == 2
+
+    r1_param = ecsa.parameters.runs[1]
+    assert isinstance(r1_param, CVParameter)
+    assert r1_param.scan_rate.to('millivolt / second').magnitude == pytest.approx(100.0)
+    assert r1_param.number_of_cycles == 2
+
+    for run_cv in ecsa.results[0].runs:
+        assert run_cv.scan_rate is not None
+        assert run_cv.scan_rate.to('volt / second').magnitude == pytest.approx(0.5)
+

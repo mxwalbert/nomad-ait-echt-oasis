@@ -15,9 +15,11 @@ from nomad_measurements.mapping.schema import RectangularSampleAlignment
 
 from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
     CounterElectrode,
+    CVParameter,
     CVResult,
     CyclicVoltammetry,
     ECSAMeasurement,
+    ECSAParameter,
     ECSAResult,
     ElectrochemicalMapping,
     ElectrochemicalMappingResult,
@@ -229,6 +231,97 @@ class XYPECParser(MatchingParser):
                 pos_y = float(py)
         return pos_x, pos_y
 
+    def _parse_cv_parameters(  # noqa: PLR0912, PLR0915
+        self,
+        sig_grp: h5py.Group | None,
+        v_arr: np.ndarray | None = None,
+    ) -> CVParameter | None:
+        """Parse CVParameter from a CyclicVoltammetryLegacy_variable_signal group."""
+        if sig_grp is None:
+            return None
+
+        cv_param = CVParameter()
+        has_any = False
+
+        def _get_float(key: str) -> float | None:
+            if key in sig_grp and sig_grp[key].size > 0:
+                val = _decode_scalar(sig_grp[key][()])
+                if val is not None:
+                    try:
+                        return float(val)
+                    except (ValueError, TypeError):
+                        return None
+            return None
+
+        # start_v -> initial_potential
+        val = _get_float('start_v')
+        if val is not None:
+            cv_param.initial_potential = val * ureg.volt
+            has_any = True
+
+        # stop_v -> final_potential
+        val = _get_float('stop_v')
+        if val is not None:
+            cv_param.final_potential = val * ureg.volt
+            has_any = True
+
+        # min_v -> lower_switching_potential
+        val = _get_float('min_v')
+        if val is not None:
+            cv_param.lower_switching_potential = val * ureg.volt
+            has_any = True
+
+        # max_v -> upper_switching_potential
+        val = _get_float('max_v')
+        if val is not None:
+            cv_param.upper_switching_potential = val * ureg.volt
+            has_any = True
+
+        # num_cycles -> number_of_cycles
+        val = _get_float('num_cycles')
+        if val is not None:
+            cv_param.number_of_cycles = int(round(val))
+            has_any = True
+
+        # scan_rate_mvpers -> scan_rate
+        val = _get_float('scan_rate_mvpers')
+        if val is not None:
+            cv_param.scan_rate = val * (ureg.millivolt / ureg.second)
+            has_any = True
+
+        # step_v / step_potential -> step_potential
+        val = _get_float('step_v')
+        if val is None:
+            val = _get_float('step_potential')
+        if val is not None:
+            cv_param.step_potential = val * ureg.volt
+            has_any = True
+
+        if not has_any:
+            return None
+
+        # Determine initial scan direction
+        if v_arr is not None and len(v_arr) > 1:
+            diffs = np.diff(v_arr)
+            non_zero = diffs[diffs != 0]
+            if len(non_zero) > 0:
+                cv_param.initial_scan_direction = (
+                    'positive' if non_zero[0] > 0 else 'negative'
+                )
+        elif (
+            cv_param.initial_potential is not None
+            and cv_param.upper_switching_potential is not None
+        ):
+            if np.isclose(
+                cv_param.initial_potential.to('volt').magnitude,
+                cv_param.upper_switching_potential.to('volt').magnitude,
+            ):
+                cv_param.initial_scan_direction = 'negative'
+            else:
+                cv_param.initial_scan_direction = 'positive'
+
+        return cv_param
+
     def _parse_cv(
         self,
         sub: h5py.Group,
@@ -257,13 +350,15 @@ class XYPECParser(MatchingParser):
         elif 'ElapsedTime' in cv_grp:
             t_arr = np.asarray(cv_grp['ElapsedTime'][()], dtype=float)
 
-        sr_mv = None
-        if 'CyclicVoltammetryLegacy_variable_signal' in cv_grp:
-            cv_sig = cv_grp['CyclicVoltammetryLegacy_variable_signal']
-            if 'scan_rate_mvpers' in cv_sig and cv_sig['scan_rate_mvpers'].size > 0:
-                sr = _decode_scalar(cv_sig['scan_rate_mvpers'][()])
-                if sr is not None:
-                    sr_mv = float(sr)
+        cv_param = None
+        sig_key = (
+            'CyclicVoltammetryLegacy_variable_signal'
+            if 'CyclicVoltammetryLegacy_variable_signal' in cv_grp
+            else next((k for k in cv_grp if k.endswith('_variable_signal')), None)
+        )
+        if sig_key:
+            cv_sig = cv_grp[sig_key]
+            cv_param = self._parse_cv_parameters(cv_sig, v_arr=v_arr)
 
         cv_res = CVResult(
             potential=v_arr * ureg.volt,
@@ -271,19 +366,20 @@ class XYPECParser(MatchingParser):
         )
         if t_arr is not None:
             cv_res.time = t_arr * ureg.second
-        if sr_mv is not None:
-            cv_res.scan_rate = sr_mv * (ureg.millivolt / ureg.second)
 
         cv_entry = CyclicVoltammetry(
             results=[cv_res],
             cell=cell,
             samples=data.samples if data.samples else None,
         )
+        if cv_param is not None:
+            cv_entry.parameters = cv_param
+
         cv_entry.normalize(self.archive, self.logger)
 
         return cv_entry
 
-    def _parse_ecsa(
+    def _parse_ecsa(  # noqa PLR0912
         self,
         sub: h5py.Group,
         cell: ThreeElectrodeCell,
@@ -301,6 +397,8 @@ class XYPECParser(MatchingParser):
         )
 
         ecsa_res = ECSAResult()
+        ecsa_params = ECSAParameter()
+
         for r_k in run_keys:
             r_grp = ecsa_grp[r_k]
             if (
@@ -321,13 +419,27 @@ class XYPECParser(MatchingParser):
             elif 'ElapsedTime' in r_grp:
                 t_r = np.asarray(r_grp['ElapsedTime'][()], dtype=float)
 
+            run_param = None
             sr_r = None
-            if 'CyclicVoltammetryLegacy_variable_signal' in r_grp:
-                r_sig = r_grp['CyclicVoltammetryLegacy_variable_signal']
-                if 'scan_rate_mvpers' in r_sig and r_sig['scan_rate_mvpers'].size > 0:
+            sig_key = (
+                'CyclicVoltammetryLegacy_variable_signal'
+                if 'CyclicVoltammetryLegacy_variable_signal' in r_grp
+                else next((k for k in r_grp if k.endswith('_variable_signal')), None)
+            )
+            if sig_key:
+                r_sig = r_grp[sig_key]
+                run_param = self._parse_cv_parameters(r_sig, v_arr=v_r)
+                if run_param is not None:
+                    ecsa_params.runs.append(run_param)
+                    if run_param.scan_rate is not None:
+                        sr_r = run_param.scan_rate.to('millivolt / second').magnitude
+                elif 'scan_rate_mvpers' in r_sig and r_sig['scan_rate_mvpers'].size > 0:
                     sr = _decode_scalar(r_sig['scan_rate_mvpers'][()])
                     if sr is not None:
-                        sr_r = float(sr)
+                        try:
+                            sr_r = float(sr)
+                        except (ValueError, TypeError):
+                            sr_r = None
 
             run_name = f'ECSA {sr_r:.0f} mV/s' if sr_r is not None else r_k
             run_cv = CVResult(
@@ -337,8 +449,6 @@ class XYPECParser(MatchingParser):
             )
             if t_r is not None:
                 run_cv.time = t_r * ureg.second
-            if sr_r is not None:
-                run_cv.scan_rate = sr_r * (ureg.millivolt / ureg.second)
 
             ecsa_res.runs.append(run_cv)
 
@@ -347,6 +457,9 @@ class XYPECParser(MatchingParser):
             cell=cell,
             samples=data.samples if data.samples else None,
         )
+        if len(ecsa_params.runs) > 0:
+            ecsa_entry.parameters = ecsa_params
+
         ecsa_entry.normalize(self.archive, self.logger)
 
         return ecsa_entry

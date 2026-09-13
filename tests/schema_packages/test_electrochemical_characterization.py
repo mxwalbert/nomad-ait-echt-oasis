@@ -216,11 +216,15 @@ def test_cyclic_voltammetry_normalization(archive):
     assert first_cyc.potential is not None
     assert first_cyc.current is not None
 
-    # 4. Verify generated Plotly figures
+    # 4. Verify generated Plotly figures on CVResult
     assert len(cv_result.figures) == EXPECTED_FIGURE_COUNT
     assert cv_result.figures[0].label == 'Cyclic Voltammogram'
     assert cv_result.figures[1].label == 'Potential & Current vs. Time'
     assert 'data' in cv_result.figures[0].figure
+
+    # 5. Verify scan rate calculated from data
+    assert cv_result.scan_rate is not None
+    assert cv_result.scan_rate.to('volt / second').magnitude == pytest.approx(0.1, rel=1e-3)
 
 
 def test_cyclic_voltammetry_raw_data_cycle_splitting(archive):
@@ -292,8 +296,9 @@ def test_cyclic_voltammetry_raw_data_cycle_splitting(archive):
     assert first_cyc.current_density is not None
     assert first_cyc.potential_vs_rhe is not None
 
-    # 3. Verify figures generated
+    # 3. Verify figures generated and scan rate calculated
     assert len(cv_result.figures) == EXPECTED_FIGURE_COUNT
+    assert cv_result.scan_rate is not None
 
 
 def test_ecsa_and_normalizer(archive):
@@ -432,6 +437,51 @@ def test_voltammetry_normalizer(archive):
     )
     v6.normalize(archive, None)
     assert v6.cell.working_electrode.sample == sample_ref
+
+
+def test_cv_scan_rate_calculation(archive):
+    """Test calculation of scan_rate from CV data and leaving it empty when not calculable."""
+    from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cv import (
+        calculate_cv_scan_rate,
+    )
+
+    # 1. Direct calculate_cv_scan_rate helper
+    assert calculate_cv_scan_rate(None, None) is None
+    assert calculate_cv_scan_rate([0.0, 1.0], None) is None
+    assert calculate_cv_scan_rate([0.0], [0.0]) is None
+    assert calculate_cv_scan_rate([0.0, 1.0], [0.0, 0.0]) is None  # dt <= 0
+    assert calculate_cv_scan_rate([1.0, 1.0, 1.0], [0.0, 1.0, 2.0]) is None  # no potential change
+
+    # Clean linear sweep: 0 to 1 V in 10 s -> 0.1 V/s
+    sr = calculate_cv_scan_rate(np.linspace(0, 1, 20), np.linspace(0, 10, 20))
+    assert sr == pytest.approx(0.1)
+
+    # Triangular wave: 0 to 1 V in 5 s, 1 to 0 V in 5 s -> 0.2 V/s
+    t_tri = np.array([0.0, 2.5, 5.0, 7.5, 10.0])
+    v_tri = np.array([0.0, 0.5, 1.0, 0.5, 0.0])
+    sr_tri = calculate_cv_scan_rate(v_tri, t_tri)
+    assert sr_tri == pytest.approx(0.2)
+
+    # 2. CVResult normalizer with time present -> scan_rate calculated
+    cv_res1 = CVResult(
+        potential=v_tri * ureg.volt,
+        current=np.zeros_like(v_tri) * ureg.ampere,
+        time=t_tri * ureg.second,
+    )
+    cv1 = CyclicVoltammetry(name='CV with time', results=[cv_res1])
+    cv1.normalize(archive, None)
+    assert cv_res1.scan_rate is not None
+    assert cv_res1.scan_rate.to('volt / second').magnitude == pytest.approx(0.2)
+
+    # 3. CVResult normalizer with time absent -> scan_rate left empty (None)
+    cv_res2 = CVResult(
+        potential=v_tri * ureg.volt,
+        current=np.zeros_like(v_tri) * ureg.ampere,
+    )
+    cv2 = CyclicVoltammetry(name='CV without time', results=[cv_res2])
+    cv2.normalize(archive, None)
+    assert cv_res2.scan_rate is None
+
 
 
 

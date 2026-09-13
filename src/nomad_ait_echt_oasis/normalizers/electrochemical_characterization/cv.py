@@ -302,6 +302,46 @@ def populate_continuous_data_from_cycles(result: 'CVResult') -> None:
                 result.potential_vs_rhe = np.concatenate(all_rhe) * ureg.volt
 
 
+def calculate_cv_scan_rate(  # noqa: PLR2004
+    potential: Any, time: Any
+) -> float | None:
+    """
+    Calculate the cyclic voltammetry scan rate (in V/s) from potential and time
+    by evaluating the total voltage range traversed (accounting for back-and-forth
+    sweeps) divided by the total time.
+    Returns None if it is not possible to calculate.
+    """
+    MIN_PNT = 2
+    v_arr = get_quantity_array(potential, 'volt')
+    t_arr = get_quantity_array(time, 'second')
+
+    if v_arr is None or t_arr is None:
+        return None
+
+    if len(v_arr) < MIN_PNT or len(t_arr) < MIN_PNT or len(v_arr) != len(t_arr):
+        return None
+
+    finite_mask = np.isfinite(v_arr) & np.isfinite(t_arr)
+    if np.sum(finite_mask) < MIN_PNT:
+        return None
+
+    v_arr = v_arr[finite_mask]
+    t_arr = t_arr[finite_mask]
+
+    dt = np.diff(t_arr)
+    positive_dt = dt[dt > 0]
+    if len(positive_dt) == 0:
+        return None
+
+    total_time = float(np.sum(positive_dt))
+    total_voltage = float(np.sum(np.abs(np.diff(v_arr))))
+
+    if total_time <= 0 or total_voltage <= 0:
+        return None
+
+    return total_voltage / total_time
+
+
 def normalize_cv_result(
     result: 'CVResult',
     cell: Any = None,
@@ -311,8 +351,13 @@ def normalize_cv_result(
 ) -> None:
     """
     Normalize a single CVResult: continuous current density, RHE conversion,
-    cycle decomposition, continuous array population, and Plotly figures.
+    cycle decomposition, continuous array population, scan rate calculation,
+    and Plotly figures for CVResult and CVCycle.
     """
+    has_area = (surface_area_val is not None) or (
+        cell is not None and getattr(cell, 'surface_area', None) is not None
+    )
+
     # 1. Normalize continuous signals on CVResult
     normalize_measurement_signals(
         result,
@@ -339,10 +384,12 @@ def normalize_cv_result(
     # 4. Populate continuous arrays on CVResult from cycles if not present
     populate_continuous_data_from_cycles(result)
 
-    # 5. Generate Plotly figures
-    has_area = (surface_area_val is not None) or (
-        cell is not None and getattr(cell, 'surface_area', None) is not None
-    )
+    # 5. Calculate scan rate from data if possible; leave empty if not possible
+    calc_sr = calculate_cv_scan_rate(result.potential, result.time)
+    if calc_sr is not None:
+        result.scan_rate = calc_sr * (ureg.volt / ureg.second)
+
+    # 6. Generate Plotly figures for CVResult
     result.figures = generate_cv_plotly_figures(result, use_density=has_area)
 
 
