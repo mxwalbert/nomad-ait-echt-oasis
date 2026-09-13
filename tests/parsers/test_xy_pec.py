@@ -12,10 +12,10 @@ from nomad_ait_echt_oasis.parsers.xy_pec import (
     _extract_legacy_var,
 )
 from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
-    CVMappingResult,
     CVResult,
-    ECSAMappingResult,
+    CyclicVoltammetry,
     ECSAResult,
+    ECSAMeasurement,
     ElectrochemicalMapping,
     ElectrochemicalMappingResult,
 )
@@ -54,45 +54,52 @@ def test_xy_pec_parser():
     archive.data.normalize(archive, logger)
 
     cv_results = [
-        r for r in archive.data.results if isinstance(r, CVMappingResult)
+        r for r in archive.data.results if isinstance(r.reference, CyclicVoltammetry)
     ]
     ecsa_results = [
-        r for r in archive.data.results if isinstance(r, ECSAMappingResult)
+        r for r in archive.data.results if isinstance(r.reference, ECSAMeasurement)
     ]
 
     assert len(cv_results) == EXPECTED_POINTS
     assert len(ecsa_results) == EXPECTED_POINTS
 
     for cv_map in cv_results:
-        assert isinstance(cv_map, CVMappingResult)
-        assert isinstance(cv_map, CVResult)
         assert isinstance(cv_map, ElectrochemicalMappingResult)
         assert cv_map.name is not None and len(cv_map.name) > 0
         assert cv_map.x_absolute is not None
         assert cv_map.y_absolute is not None
-        assert len(cv_map.cycles) > 0
-        assert len(cv_map.figures) == EXPECTED_FIGURES
+        cv = cv_map.reference
+        assert isinstance(cv, CyclicVoltammetry)
+        cv_result = cv.results[0]
+        assert isinstance(cv_result, CVResult)
+        assert len(cv_result.cycles) > 0
+        assert len(cv_result.figures) == EXPECTED_FIGURES
 
     for ecsa_map in ecsa_results:
-        assert isinstance(ecsa_map, ECSAMappingResult)
-        assert isinstance(ecsa_map, ECSAResult)
         assert isinstance(ecsa_map, ElectrochemicalMappingResult)
         assert ecsa_map.name is not None and len(ecsa_map.name) > 0
         assert ecsa_map.x_absolute is not None
         assert ecsa_map.y_absolute is not None
-        assert len(ecsa_map.runs) == EXPECTED_ECSA_RUNS
-        assert ecsa_map.double_layer_capacitance is not None
-        assert len(ecsa_map.figures) == EXPECTED_ECSA_FIGURES
-        assert len(ecsa_map.runs[0].figures) == EXPECTED_FIGURES
+        ecsa = ecsa_map.reference
+        assert isinstance(ecsa, ECSAMeasurement)
+        ecsa_result = ecsa.results[0]
+        assert isinstance(ecsa_result, ECSAResult)
+        assert ecsa_result.double_layer_capacitance is not None
+        assert len(ecsa_result.figures) == EXPECTED_ECSA_FIGURES
+        assert len(ecsa_result.runs[0].figures) == EXPECTED_FIGURES
 
 
 def test_decode_val():
-    """Test _decode_val with bytes, numpy scalar bytes, scalars, and strings."""
+    """Test _decode_val with bytes, numpy scalar bytes, scalars, strings, and 1D arrays."""
     assert _decode_val(b'test_bytes') == 'test_bytes'
     assert _decode_val(np.array(b'numpy_bytes')) == 'numpy_bytes'
+    assert _decode_val(np.array([b'array_bytes'])) == 'array_bytes'
+    assert _decode_val(np.array([42])) == 42
     assert _decode_val(np.array(42)) == 42
     assert _decode_val('already_string') == 'already_string'
     assert _decode_val(100) == 100
+    assert _decode_val(np.array([b'a', b'b'])) == ['a', 'b']
+    assert _decode_val(np.array([1, 2])) == [1, 2]
 
 
 def test_extract_legacy_var(tmp_path):
@@ -203,6 +210,7 @@ def test_parser_metadata_fallbacks_and_elapsed_time(tmp_path):
         # Data with electrolyte and alignment size
         data_grp = entry.create_group('data')
         sig_grp = data_grp.create_group('ScreeningLoop_variable_signal')
+        sig_grp.create_dataset('sample_shape', data=np.array(b'rectangle'))
         sig_grp.create_dataset('electrolyte', data=np.array([b'1M KOH']))
         sig_grp.create_dataset('sample_size_x', data=np.array([25.0]))
         sig_grp.create_dataset('sample_size_y', data=np.array([50.0]))
@@ -210,11 +218,13 @@ def test_parser_metadata_fallbacks_and_elapsed_time(tmp_path):
         primary = data_grp.create_group('primary')
         sub = primary.create_group('Subprotocol_RunSubprotocol_0')
 
-        # Coordinates
+        # Coordinates and variable signal
         sp_sig = sub.create_group('SinglePointCVfromReservoir_variable_signal')
         sp_sig.create_dataset('position_x', data=np.array([12.5]))
         sp_sig.create_dataset('position_y', data=np.array([25.0]))
         sp_sig.create_dataset('position_index', data=np.array([0]))
+        sp_sig.create_dataset('electrolyte', data=np.array([b'1M KOH']))
+        sp_sig.create_dataset('ph_value', data=np.array([14.0]))
 
         # CV with ElapsedTime instead of time, and fallbacks
         cv_grp = sub.create_group('Subprotocol_CyclicVoltammetry')
@@ -235,28 +245,46 @@ def test_parser_metadata_fallbacks_and_elapsed_time(tmp_path):
         r0.create_dataset('matterlab_potentiostat_read_current', data=i_data)
         r0.create_dataset('ElapsedTime', data=np.linspace(0, 5, 20))
 
-    archive = EntryArchive()
+    archive = EntryArchive(metadata=EntryMetadata(entry_name='metadata_test'))
     parser.parse(str(h5_file), archive, logger)
 
     data = archive.data
     assert data.description == 'Test Run Description'
     assert len(data.samples) == 1
-    assert data.samples[0].name == 'AIT_SAMPLE_042'
+    assert data.samples[0].lab_id == 'AIT_SAMPLE_042'
     assert data.sample_alignment is not None
     assert data.sample_alignment.width.to('millimeter').magnitude == pytest.approx(25.0)
     assert data.sample_alignment.height.to('millimeter').magnitude == pytest.approx(50.0)
 
-    # Check that fallback area and reference type were populated
-    assert data.cell.working_electrode.surface_area is not None
-    assert data.cell.working_electrode.surface_area.to('centimeter ** 2').magnitude == pytest.approx(0.196)
-    assert data.cell.reference_electrode.reference_type == 'Ag/AgCl (sat. KCl)'
-
     # Check results
     assert len(data.results) == 2
-    cv_res = data.results[0]
-    assert isinstance(cv_res, CVMappingResult)
+    cv_map = data.results[0]
+    assert isinstance(cv_map, ElectrochemicalMappingResult)
+    assert cv_map.x_absolute.to('millimeter').magnitude == pytest.approx(12.5)
+    assert cv_map.y_absolute.to('millimeter').magnitude == pytest.approx(25.0)
+
+    cv = cv_map.reference
+    assert isinstance(cv, CyclicVoltammetry)
+    assert cv.cell is not None
+    assert cv.cell.working_electrode is not None
+    assert cv.cell.reference_electrode.reference_type == 'Reversible Hydrogen Electrode (RHE)'
+    assert cv.cell.counter_electrode.geometry == 'Wire'
+    assert cv.cell.electrolyte.description == '1M KOH'
+    assert cv.cell.electrolyte.ph_value == 14.0
+
+    cv_res = cv.results[0]
+    assert isinstance(cv_res, CVResult)
     assert cv_res.time is not None
-    assert cv_res.point_index == 0
+    assert len(cv_res.time) == 20
+
+    ecsa_map = data.results[1]
+    assert isinstance(ecsa_map, ElectrochemicalMappingResult)
+    ecsa = ecsa_map.reference
+    assert isinstance(ecsa, ECSAMeasurement)
+    ecsa_res = ecsa.results[0]
+    assert isinstance(ecsa_res, ECSAResult)
+    assert len(ecsa_res.runs) == 1
+    assert ecsa_res.runs[0].time is not None
 
 
 def test_parser_subprotocol_skip_cases(tmp_path):
@@ -271,17 +299,21 @@ def test_parser_subprotocol_skip_cases(tmp_path):
     with h5py.File(h5_file, 'w') as f:
         entry = f.create_group('CAMELS_entry')
         data_grp = entry.create_group('data')
+        data_grp.create_group('ScreeningLoop_variable_signal')
         primary = data_grp.create_group('primary')
 
         # Subprotocol 0: Missing Subprotocol_CyclicVoltammetry & Subprotocol_ECSA
-        primary.create_group('Subprotocol_RunSubprotocol_0')
+        sub0 = primary.create_group('Subprotocol_RunSubprotocol_0')
+        sub0.create_group('SinglePointCVfromReservoir_variable_signal')
 
         # Subprotocol 1: Subprotocol_CyclicVoltammetry exists but missing potential/current
         sub1 = primary.create_group('Subprotocol_RunSubprotocol_1')
+        sub1.create_group('SinglePointCVfromReservoir_variable_signal')
         sub1.create_group('Subprotocol_CyclicVoltammetry')
 
         # Subprotocol 2: ECSA exists but run missing potential/current, and invalid electrode area
         sub2 = primary.create_group('Subprotocol_RunSubprotocol_2')
+        sub2.create_group('SinglePointCVfromReservoir_variable_signal')
         cv2 = sub2.create_group('Subprotocol_CyclicVoltammetry')
         cv2_sig = cv2.create_group('CyclicVoltammetryLegacy_variable_signal')
         cv2_sig.create_dataset('electrode_area', data=np.array([b'invalid_float_string']))
@@ -289,23 +321,19 @@ def test_parser_subprotocol_skip_cases(tmp_path):
         ecsa2 = sub2.create_group('Subprotocol_ECSA')
         ecsa2.create_group('Run_0')  # Empty run missing potential/current
 
-    archive = EntryArchive()
+    archive = EntryArchive(metadata=EntryMetadata(entry_name='skip_cases'))
     parser.parse(str(h5_file), archive, logger)
 
     assert len(archive.data.results) == 1
-    assert isinstance(archive.data.results[0], ECSAMappingResult)
-    assert len(archive.data.results[0].runs) == 0
+    ecsa_map = archive.data.results[0]
+    assert isinstance(ecsa_map, ElectrochemicalMappingResult)
+    ecsa = ecsa_map.reference
+    assert isinstance(ecsa, ECSAMeasurement)
+    assert len(ecsa.results[0].runs) == 0
 
 
 def test_parser_with_predefined_cell_parameters(tmp_path):
-    """Test parse when archive.data already has cell parameters and alignment ph."""
-    from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
-        Electrolyte,
-        ReferenceElectrode,
-        ThreeElectrodeCell,
-        WorkingElectrode,
-    )
-
+    """Test parse with cell parameters and ph from variable signal."""
     parser = XYPECParser()
     logger = logging.getLogger('test_xy_pec')
 
@@ -313,11 +341,14 @@ def test_parser_with_predefined_cell_parameters(tmp_path):
     with h5py.File(h5_file, 'w') as f:
         entry = f.create_group('CAMELS_entry')
         data_grp = entry.create_group('data')
-        sig_grp = data_grp.create_group('ScreeningLoop_variable_signal')
-        sig_grp.create_dataset('ph_value', data=np.array([2.0]))
+        data_grp.create_group('ScreeningLoop_variable_signal')
 
         primary = data_grp.create_group('primary')
         sub = primary.create_group('Subprotocol_RunSubprotocol_0')
+        sub_sig = sub.create_group('SinglePointCVfromReservoir_variable_signal')
+        sub_sig.create_dataset('ph_value', data=np.array([2.0]))
+        sub_sig.create_dataset('electrolyte', data=np.array([b'0.1M H2SO4']))
+
         cv_grp = sub.create_group('Subprotocol_CyclicVoltammetry')
         v_data = np.linspace(-0.2, 0.6, 15)
         i_data = np.linspace(-0.001, 0.001, 15)
@@ -325,19 +356,76 @@ def test_parser_with_predefined_cell_parameters(tmp_path):
         cv_grp.create_dataset('matterlab_potentiostat_read_current', data=i_data)
         cv_grp.create_dataset('time', data=np.linspace(0, 5, 15))
 
-    cell = ThreeElectrodeCell(
-        working_electrode=WorkingElectrode(surface_area=0.5 * (ureg.centimeter**2)),
-        reference_electrode=ReferenceElectrode(
-            standard_potential_vs_rhe=0.200 * ureg.volt
-        ),
-        electrolyte=Electrolyte(ph_value=2.0),
-    )
-    predefined_data = ElectrochemicalMapping(cell=cell)
-    archive = EntryArchive(data=predefined_data)
-
+    archive = EntryArchive(metadata=EntryMetadata(entry_name='predefined_cell'))
     parser.parse(str(h5_file), archive, logger)
 
     assert len(archive.data.results) == 1
-    cv_res = archive.data.results[0]
-    assert cv_res.current_density is not None
+    cv_map = archive.data.results[0]
+    assert isinstance(cv_map, ElectrochemicalMappingResult)
+    cv = cv_map.reference
+    assert isinstance(cv, CyclicVoltammetry)
+    assert cv.cell.electrolyte.ph_value == 2.0
+    assert cv.cell.electrolyte.description == '0.1M H2SO4'
+    assert cv.cell.reference_electrode.reference_type == 'Reversible Hydrogen Electrode (RHE)'
+
+    cv_res = cv.results[0]
+    assert isinstance(cv_res, CVResult)
     assert cv_res.potential_vs_rhe is not None
+
+
+def test_parser_sample_reference_edge_cases(tmp_path):
+    """
+    Test sample reference edge cases:
+    - Missing sample group entirely: data.samples is not set, no downstream crashes.
+    - Empty sample group: data.samples is not set, no downstream crashes.
+    - Sample with only sample_id: name falls back to sample_id, working electrode sample syncs.
+    - Sample with only name: name is set, working electrode sample syncs.
+    """
+    parser = XYPECParser()
+    logger = logging.getLogger('test_xy_pec')
+
+    for case_name, sample_data in [
+        ('missing_sample', None),
+        ('empty_sample', {}),
+        ('id_only', {'sample_id': b'SAMPLE-ID-99'}),
+        ('name_only', {'name': b'SAMPLE-NAME-88'}),
+    ]:
+        h5_file = tmp_path / f'{case_name}.h5'
+        with h5py.File(h5_file, 'w') as f:
+            entry = f.create_group('CAMELS_entry')
+            if sample_data is not None:
+                s_grp = entry.create_group('sample')
+                for k, v in sample_data.items():
+                    s_grp.create_dataset(k, data=np.array(v))
+
+            data_grp = entry.create_group('data')
+            data_grp.create_group('ScreeningLoop_variable_signal')
+            primary = data_grp.create_group('primary')
+            sub = primary.create_group('Subprotocol_RunSubprotocol_0')
+            sub.create_group('SinglePointCVfromReservoir_variable_signal')
+
+            cv_grp = sub.create_group('Subprotocol_CyclicVoltammetry')
+            cv_grp.create_dataset('matterlab_potentiostat_read_potential', data=np.array([0.1, 0.2]))
+            cv_grp.create_dataset('matterlab_potentiostat_read_current', data=np.array([0.01, 0.02]))
+            cv_grp.create_dataset('time', data=np.array([0.0, 1.0]))
+
+        archive = EntryArchive(metadata=EntryMetadata(entry_name=case_name))
+        parser.parse(str(h5_file), archive, logger)
+
+        data = archive.data
+        assert len(data.results) == 1
+        cv = data.results[0].reference
+        assert isinstance(cv, CyclicVoltammetry)
+
+        if case_name == 'missing_sample' or case_name == 'empty_sample':
+            assert not data.samples
+            assert cv.cell.working_electrode.sample is None
+        elif case_name == 'id_only':
+            assert len(data.samples) == 1
+            assert data.samples[0].lab_id == 'SAMPLE-ID-99'
+            assert data.samples[0].name == 'SAMPLE-ID-99'
+            assert cv.cell.working_electrode.sample == data.samples[0]
+        elif case_name == 'name_only':
+            assert len(data.samples) == 1
+            assert data.samples[0].name == 'SAMPLE-NAME-88'
+            assert cv.cell.working_electrode.sample == data.samples[0]

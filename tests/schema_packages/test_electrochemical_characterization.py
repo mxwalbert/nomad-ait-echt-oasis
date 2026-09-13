@@ -10,11 +10,9 @@ from nomad.units import ureg
 from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
     CounterElectrode,
     CVCycle,
-    CVMappingResult,
     CVParameter,
     CVResult,
     CyclicVoltammetry,
-    ECSAMappingResult,
     ECSAMeasurement,
     ECSAParameter,
     ECSAResult,
@@ -366,30 +364,6 @@ def test_ecsa_and_normalizer(archive):
     assert res.runs[0].figures[0].label == 'Cyclic Voltammogram'
 
 
-def test_mapping_result_inheritance():
-    """Test CVMappingResult and ECSAMappingResult multiple inheritance."""
-    cv_map = CVMappingResult(
-        name='CV Run',
-        x_absolute=10.0 * ureg.millimeter,
-        y_absolute=20.0 * ureg.millimeter,
-        scan_rate=0.05 * (ureg.volt / ureg.second),
-    )
-    assert isinstance(cv_map, ElectrochemicalMappingResult)
-    assert isinstance(cv_map, CVResult)
-    assert isinstance(cv_map, ElectrochemicalMeasurementResult)
-    assert cv_map.scan_rate.to('volt / second').magnitude == 0.05
-
-    ecsa_map = ECSAMappingResult(
-        name='ECSA Run',
-        x_absolute=10.0 * ureg.millimeter,
-        y_absolute=20.0 * ureg.millimeter,
-    )
-    assert isinstance(ecsa_map, ElectrochemicalMappingResult)
-    assert isinstance(ecsa_map, ECSAResult)
-    assert isinstance(ecsa_map, PlotSection)
-    assert isinstance(ecsa_map, ElectrochemicalMeasurementResult)
-
-
 def test_voltammetry_normalizer(archive):
     """
     Test Voltammetry.normalize method:
@@ -448,6 +422,16 @@ def test_voltammetry_normalizer(archive):
     assert v5.instruments[0] == pot_ref
     assert len(v5.samples) == 1
     assert v5.samples[0] == sample_ref
+
+    # 6. Check reverse synchronization (Measurement.samples -> cell.working_electrode.sample):
+    v6 = Voltammetry(
+        name='Voltammetry 6',
+        potentiostat=pot_ref,
+        samples=[sample_ref],
+        cell=ThreeElectrodeCell(working_electrode=WorkingElectrode()),
+    )
+    v6.normalize(archive, None)
+    assert v6.cell.working_electrode.sample == sample_ref
 
 
 

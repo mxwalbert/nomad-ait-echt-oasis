@@ -30,12 +30,14 @@ from nomad.metainfo import (
 from nomad_material_processing.solution.general import (
     Solution,
 )
+from nomad_measurements.general import ActivityReference
 from nomad_measurements.mapping.schema import (
     MappingMeasurement,
     MappingResult,
 )
 
 from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cell import (
+    normalize_reference_electrode,
     normalize_three_electrode_cell,
 )
 from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cv import (
@@ -90,7 +92,7 @@ C_UNIT = 'milliampere'
 
 
 # --- Categories ---
-class ElectrochemicalTestingCategory(EntryDataCategory):
+class ElectrochemicalMeasurementCategory(EntryDataCategory):
     """
     Category for electrochemical characterization measurements.
     """
@@ -447,6 +449,10 @@ class ReferenceElectrode(Electrode):
         ),
     )
 
+    def normalize(self, archive: 'EntryArchive', logger: 'BoundLogger') -> None:
+        super().normalize(archive, logger)
+        normalize_reference_electrode(self, archive, logger)
+
 
 class CounterElectrode(Electrode):
     """
@@ -604,7 +610,7 @@ class ElectrochemicalMeasurementParameter(MeasurementParameter):
     )
 
 
-class ElectrochemicalTesting(Measurement):
+class ElectrochemicalMeasurement(Measurement):
     """
     Base activity section for all electrochemical characterization measurements.
     Synchronizes the sample represented by the `WorkingElectrode` with
@@ -616,7 +622,7 @@ class ElectrochemicalTesting(Measurement):
     """
 
     m_def = Section(
-        categories=[ElectrochemicalTestingCategory],
+        categories=[ElectrochemicalMeasurementCategory],
         description="""
         Base measurement for electrochemical characterization.
         """,
@@ -653,10 +659,6 @@ class ElectrochemicalTesting(Measurement):
                 self.samples = [we.sample]
             elif self.samples and we.sample is None:
                 we.sample = self.samples[0]
-
-        # Normalize cell configuration if present
-        if self.cell:
-            self.cell.normalize(archive, logger)
 
 
 class ElectrochemicalMeasurementResult(MeasurementResult):
@@ -905,7 +907,7 @@ class CVResult(ElectrochemicalMeasurementResult, PlotSection):
     )
 
 
-class Voltammetry(ElectrochemicalTesting):
+class Voltammetry(ElectrochemicalMeasurement, EntryData):
     """
     Voltammetric measurement where the potential of the working electrode is varied
     while recording the resulting current.
@@ -949,7 +951,7 @@ class Voltammetry(ElectrochemicalTesting):
                 self.instruments.append(self.potentiostat)
 
 
-class CyclicVoltammetry(Voltammetry, EntryData):
+class CyclicVoltammetry(Voltammetry):
     """
     Cyclic Voltammetry (CV) measurement.
     Sweeps the potential of the working electrode triangularly between vertex potentials
@@ -961,7 +963,7 @@ class CyclicVoltammetry(Voltammetry, EntryData):
     """
 
     m_def = Section(
-        categories=[ElectrochemicalTestingCategory],
+        categories=[ElectrochemicalMeasurementCategory],
         description="""
         Cyclic voltammetry measurement entry schema.
         """,
@@ -1090,7 +1092,7 @@ class ECSAResult(ElectrochemicalMeasurementResult, PlotSection):
         normalize_ecsa_result(self)
 
 
-class ECSAMeasurement(ElectrochemicalTesting, EntryData):
+class ECSAMeasurement(ElectrochemicalMeasurement, EntryData):
     """
     Electrochemically Active Surface Area (ECSA) measurement entry.
     Sweeps cyclic voltammograms across multiple scan rates within a capacitive
@@ -1099,7 +1101,7 @@ class ECSAMeasurement(ElectrochemicalTesting, EntryData):
     """
 
     m_def = Section(
-        categories=[ElectrochemicalTestingCategory],
+        categories=[ElectrochemicalMeasurementCategory],
         description="""
         ECSA measurement entry schema.
         """,
@@ -1126,53 +1128,58 @@ class ECSAMeasurement(ElectrochemicalTesting, EntryData):
         normalize_ecsa_measurement(self, archive, logger)
 
 
-class ElectrochemicalMappingResult(MappingResult, ElectrochemicalMeasurementResult):
+class MeasurementReference(ActivityReference):
     """
-    Electrochemical characterization results at a single mapped spatial point.
-    Directly interfaces ElectrochemicalMeasurementResult and MappingResult,
-    combining spatial stage coordinates with electrochemical response series.
+    A section used for referencing a Measurement.
+    """
+
+    reference = Quantity(
+        type=Measurement,
+        description='A reference to a NOMAD `Measurement` entry.',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.ReferenceEditQuantity,
+            label='Measurement reference',
+        ),
+    )
+
+
+class ElectrochemicalMappingResult(MappingResult, MeasurementReference):
+    """
+    Electrochemical characterization measurement at a single mapped spatial point.
     """
 
     m_def = Section(
         description="""
-        Electrochemical results at a single mapped spatial point.
+        Electrochemical characterization measurement at a single mapped spatial point.
         """,
     )
 
-
-class CVMappingResult(CVResult, ElectrochemicalMappingResult):
-    """
-    Cyclic voltammetry result at a mapped spatial point.
-    """
-
-    m_def = Section(
-        description="""
-        Cyclic voltammetry result at a single mapped spatial point.
-        """,
+    reference = Quantity(
+        type=ElectrochemicalMeasurement,
+        description='A reference to an `ElectrochemicalMeasurement` entry.',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.ReferenceEditQuantity,
+            label='ElectrochemicalMeasurement reference',
+        ),
     )
 
-
-class ECSAMappingResult(ECSAResult, ElectrochemicalMappingResult):
-    """
-    ECSA measurement result at a mapped spatial point.
-    """
-
-    m_def = Section(
-        description="""
-        ECSA result at a single mapped spatial point.
-        """,
-    )
+    def normalize(self, archive: 'EntryArchive', logger: 'BoundLogger') -> None:
+        """
+        Includes in the name of the result the measurement technique.
+        """
+        super().normalize(archive, logger)
+        if self.reference:
+            technique = type(self.reference).__name__
+            self.name = f'{technique} at {self.name}' if self.name else technique
 
 
-class ElectrochemicalMapping(MappingMeasurement, ElectrochemicalTesting, EntryData):
+class ElectrochemicalMapping(MappingMeasurement, EntryData):
     """
     Electrochemical characterization mapping across multiple sample surface positions.
-    Combines spatial stage alignment and coordinate mapping with electrochemical cell
-    configuration and measurements at each mapped point.
     """
 
     m_def = Section(
-        categories=[ElectrochemicalTestingCategory],
+        categories=[ElectrochemicalMeasurementCategory],
         description="""
         Electrochemical mapping across multiple sample surface positions.
         """,
@@ -1185,15 +1192,6 @@ class ElectrochemicalMapping(MappingMeasurement, ElectrochemicalTesting, EntryDa
         List of electrochemical results at mapped spatial positions.
         """,
     )
-
-    def normalize(self, archive: 'EntryArchive', logger: 'BoundLogger') -> None:
-        """
-        Normalizer for ElectrochemicalMapping:
-        1. Calculates relative sample coordinates via MappingMeasurement.
-        2. Synchronizes sample and reference potentials via ElectrochemicalTesting.
-        Ingests pre-normalized results without performing measurement normalizations.
-        """
-        super().normalize(archive, logger)
 
 
 m_package.__init_metainfo__()

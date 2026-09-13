@@ -17,7 +17,11 @@ STANDARD_REFERENCE_POTENTIALS_VS_RHE: dict[str, float] = {
 }
 
 
-def normalize_reference_electrode(ref: Any) -> None:
+def normalize_reference_electrode(
+    ref: Any,
+    archive: 'EntryArchive' = None,
+    logger: 'BoundLogger' = None,
+) -> None:
     """Fill standard reduction potential vs RHE if known and not set."""
     if ref is None:
         return

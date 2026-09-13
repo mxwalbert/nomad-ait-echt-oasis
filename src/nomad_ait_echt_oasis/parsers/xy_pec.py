@@ -7,21 +7,21 @@ import h5py
 import numpy as np
 from nomad.datamodel.metainfo.basesections import (
     CompositeSystemReference,
+    InstrumentReference,
 )
 from nomad.parsing.parser import MatchingParser
 from nomad.units import ureg
 from nomad_measurements.mapping.schema import RectangularSampleAlignment
 
-from nomad_ait_echt_oasis.normalizers.electrochemical_characterization import (
-    STANDARD_REFERENCE_POTENTIALS_VS_RHE,
-    normalize_cv_result,
-    normalize_ecsa_result,
-)
 from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
-    CVMappingResult,
+    CounterElectrode,
     CVResult,
-    ECSAMappingResult,
+    CyclicVoltammetry,
+    ECSAMeasurement,
+    ECSAResult,
     ElectrochemicalMapping,
+    ElectrochemicalMappingResult,
+    ElectrochemicalMeasurement,
     Electrolyte,
     ReferenceElectrode,
     ThreeElectrodeCell,
@@ -34,14 +34,27 @@ if TYPE_CHECKING:
 
 
 def _decode_val(val):
-    """Safely decode byte strings and numpy scalars to Python types."""
+    """Safely decode byte strings, numpy scalars, and 1D arrays to Python types."""
     if isinstance(val, bytes):
         return val.decode('utf-8', errors='ignore')
-    if hasattr(val, 'item') and hasattr(val, 'shape') and val.shape == ():
+    if hasattr(val, 'size') and val.size == 1:
         val = val.item()
-    if isinstance(val, bytes):
-        return val.decode('utf-8', errors='ignore')
+        if isinstance(val, bytes):
+            return val.decode('utf-8', errors='ignore')
+        return val
+    if isinstance(val, (np.ndarray, list)):
+        return [_decode_val(v) for v in val]
     return val
+
+
+def _decode_scalar(val, default=None):
+    """Safely decode byte strings and numpy arrays/scalars to a single Python scalar."""
+    if val is None:
+        return default
+    decoded = _decode_val(val)
+    if isinstance(decoded, list):
+        return decoded[0] if decoded else default
+    return decoded if decoded is not None else default
 
 
 def _extract_legacy_var(grp, candidate_keys):
@@ -52,8 +65,8 @@ def _extract_legacy_var(grp, candidate_keys):
         if key in grp:
             item = grp[key]
             if item.size > 0:
-                val = item[0]
-                return _decode_val(val)
+                val = _decode_val(item[()])
+                return val
     return None
 
 
@@ -98,10 +111,14 @@ class XYPECParser(MatchingParser):
         except Exception:
             return False
 
-    def _parse_metadata(
-        self, entry: h5py.Group, data: ElectrochemicalMapping
+    def _parse_metadata(  # noqa: PLR0912
+        self,
+        entry: h5py.Group,
+        data: ElectrochemicalMapping,
     ) -> CompositeSystemReference | None:
-        """Parse datetime, description, and sample reference."""
+        """
+        Parse datetime, description, sample reference, and instruments.
+        """
         if 'measurement_details' in entry:
             md = entry['measurement_details']
             if 'start_time' in md:
@@ -115,65 +132,110 @@ class XYPECParser(MatchingParser):
                 if desc:
                     data.description = str(desc)
 
-        sample_name = None
         if 'sample' in entry:
             s_grp = entry['sample']
+            sample_ref = CompositeSystemReference()
             if 'name' in s_grp:
-                sample_name = _decode_val(s_grp['name'][()])
-            elif 'sample_id' in s_grp:
-                sample_name = _decode_val(s_grp['sample_id'][()])
+                sample_ref.name = _decode_scalar(s_grp['name'][()])
+            if 'sample_id' in s_grp:
+                sample_ref.lab_id = _decode_scalar(s_grp['sample_id'][()])
+            if not sample_ref.name and sample_ref.lab_id:
+                sample_ref.name = sample_ref.lab_id
+            if sample_ref.name or sample_ref.lab_id:
+                data.samples = [sample_ref]
 
-        sample_ref = (
-            CompositeSystemReference(name=str(sample_name)) if sample_name else None
-        )
-        if sample_ref:
-            data.samples = [sample_ref]
-        return sample_ref
+        instruments = []
+        if 'instruments' in entry:
+            for inst_name in entry['instruments']:
+                inst_grp = entry['instruments'][inst_name]
+                inst_ref = InstrumentReference(name=inst_name)
+                if 'name' in inst_grp:
+                    inst_ref.name = _decode_val(inst_grp['name'][()])
+                if 'ELN-instrument-id' in inst_grp:
+                    inst_ref.lab_id = _decode_val(inst_grp['ELN-instrument-id'][()])
 
-    def _parse_cell_and_alignment(
+                instruments.append(inst_ref)
+        data.instruments = instruments
+
+    def _parse_alignment(
         self,
-        entry: h5py.Group,
+        sl_var: h5py.Group,
         data: ElectrochemicalMapping,
-        sample_ref: CompositeSystemReference | None,
     ) -> None:
-        """Parse electrochemical cell, electrolyte, and sample geometry."""
-        cell = data.cell if data.cell is not None else ThreeElectrodeCell()
-        if cell.working_electrode is None:
-            cell.working_electrode = WorkingElectrode(sample=sample_ref)
-        elif sample_ref and cell.working_electrode.sample is None:
-            cell.working_electrode.sample = sample_ref
-        if cell.reference_electrode is None:
-            cell.reference_electrode = ReferenceElectrode()
+        """Parse sample geometry."""
+        if 'sample_shape' not in sl_var:
+            return
 
-        sample_size_x = None
-        sample_size_y = None
-        if 'data' in entry and 'ScreeningLoop_variable_signal' in entry['data']:
-            sl_sig = entry['data']['ScreeningLoop_variable_signal']
-            if 'electrolyte' in sl_sig and sl_sig['electrolyte'].size > 0:
-                el_desc = _decode_val(sl_sig['electrolyte'][0])
-                if el_desc:
-                    cell.electrolyte = cell.electrolyte or Electrolyte()
-                    cell.electrolyte.description = str(el_desc)
-            if 'ph_value' in sl_sig and sl_sig['ph_value'].size > 0:
-                cell.electrolyte = cell.electrolyte or Electrolyte()
-                cell.electrolyte.ph_value = float(sl_sig['ph_value'][0])
-            if 'sample_size_x' in sl_sig and sl_sig['sample_size_x'].size > 0:
-                sample_size_x = float(sl_sig['sample_size_x'][0])
-            if 'sample_size_y' in sl_sig and sl_sig['sample_size_y'].size > 0:
-                sample_size_y = float(sl_sig['sample_size_y'][0])
+        sample_shape = _decode_scalar(sl_var['sample_shape'][()])
 
-        if sample_size_x is not None and sample_size_y is not None:
-            data.sample_alignment = RectangularSampleAlignment(
-                width=sample_size_x * ureg.millimeter,
-                height=sample_size_y * ureg.millimeter,
-            )
+        if sample_shape == 'rectangle':
+            sample_size_x = None
+            sample_size_y = None
+            if 'sample_size_x' in sl_var and sl_var['sample_size_x'].size > 0:
+                sx = _decode_scalar(sl_var['sample_size_x'][()])
+                if sx is not None:
+                    sample_size_x = float(sx)
+            if 'sample_size_y' in sl_var and sl_var['sample_size_y'].size > 0:
+                sy = _decode_scalar(sl_var['sample_size_y'][()])
+                if sy is not None:
+                    sample_size_y = float(sy)
 
-        data.cell = cell
+            if sample_size_x is not None and sample_size_y is not None:
+                data.sample_alignment = RectangularSampleAlignment(
+                    width=sample_size_x * ureg.millimeter,
+                    height=sample_size_y * ureg.millimeter,
+                )
+        # TODO implement other sample shapes
 
-    def _parse_cv_step(
-        self, sub: h5py.Group, result_cls: type[CVResult] = CVResult
-    ) -> CVResult | None:
-        """Parse single-point standard cyclic voltammetry dataset."""
+    def _parse_cell(
+        self,
+        sub_var: h5py.Group,
+    ) -> ThreeElectrodeCell:
+        """Parse three electrode cell setup."""
+        cell = ThreeElectrodeCell()
+        cell.working_electrode = WorkingElectrode()
+        cell.reference_electrode = ReferenceElectrode(
+            reference_type='Reversible Hydrogen Electrode (RHE)',
+        )
+        cell.counter_electrode = CounterElectrode(
+            geometry='Wire',
+        )
+
+        cell.electrolyte = Electrolyte()
+        if 'electrolyte' in sub_var and sub_var['electrolyte'].size > 0:
+            el_desc = _decode_scalar(sub_var['electrolyte'][()])
+            if el_desc:
+                cell.electrolyte.description = str(el_desc)
+        if 'ph_value' in sub_var and sub_var['ph_value'].size > 0:
+            ph = _decode_scalar(sub_var['ph_value'][()])
+            if ph is not None:
+                cell.electrolyte.ph_value = float(ph)
+
+        cell.normalize(self.archive, self.logger)
+
+        return cell
+
+    def _parse_position(self, sub_var: h5py.Group) -> tuple[float, float]:
+        """Parse position from sub_var."""
+        pos_x = 0.0
+        pos_y = 0.0
+        if 'position_x' in sub_var and sub_var['position_x'].size > 0:
+            px = _decode_scalar(sub_var['position_x'][()])
+            if px is not None:
+                pos_x = float(px)
+        if 'position_y' in sub_var and sub_var['position_y'].size > 0:
+            py = _decode_scalar(sub_var['position_y'][()])
+            if py is not None:
+                pos_y = float(py)
+        return pos_x, pos_y
+
+    def _parse_cv(
+        self,
+        sub: h5py.Group,
+        cell: ThreeElectrodeCell,
+        data: ElectrochemicalMapping,
+    ) -> CyclicVoltammetry | None:
+        """Parse a single cyclic voltammetry measurement entry."""
         if 'Subprotocol_CyclicVoltammetry' not in sub:
             return None
         cv_grp = sub['Subprotocol_CyclicVoltammetry']
@@ -199,10 +261,11 @@ class XYPECParser(MatchingParser):
         if 'CyclicVoltammetryLegacy_variable_signal' in cv_grp:
             cv_sig = cv_grp['CyclicVoltammetryLegacy_variable_signal']
             if 'scan_rate_mvpers' in cv_sig and cv_sig['scan_rate_mvpers'].size > 0:
-                sr_mv = float(cv_sig['scan_rate_mvpers'][0])
+                sr = _decode_scalar(cv_sig['scan_rate_mvpers'][()])
+                if sr is not None:
+                    sr_mv = float(sr)
 
-        cv_res = result_cls(
-            name='Cyclic Voltammetry',
+        cv_res = CVResult(
             potential=v_arr * ureg.volt,
             current=i_arr * ureg.ampere,
         )
@@ -211,12 +274,22 @@ class XYPECParser(MatchingParser):
         if sr_mv is not None:
             cv_res.scan_rate = sr_mv * (ureg.millivolt / ureg.second)
 
-        return cv_res
+        cv_entry = CyclicVoltammetry(
+            results=[cv_res],
+            cell=cell,
+            samples=data.samples if data.samples else None,
+        )
+        cv_entry.normalize(self.archive, self.logger)
 
-    def _parse_ecsa_step(
-        self, sub: h5py.Group, result_cls: type[ECSAMappingResult] = ECSAMappingResult
-    ) -> ECSAMappingResult | None:
-        """Parse ECSA scan rate series into an ECSAMappingResult."""
+        return cv_entry
+
+    def _parse_ecsa(
+        self,
+        sub: h5py.Group,
+        cell: ThreeElectrodeCell,
+        data: ElectrochemicalMapping,
+    ) -> ECSAMeasurement | None:
+        """Parse ECSA scan rate series into an ECSA measurement entry."""
         if 'Subprotocol_ECSA' not in sub:
             return None
         ecsa_grp = sub['Subprotocol_ECSA']
@@ -227,7 +300,7 @@ class XYPECParser(MatchingParser):
             )
         )
 
-        ecsa_res = result_cls(name='ECSA')
+        ecsa_res = ECSAResult()
         for r_k in run_keys:
             r_grp = ecsa_grp[r_k]
             if (
@@ -252,7 +325,9 @@ class XYPECParser(MatchingParser):
             if 'CyclicVoltammetryLegacy_variable_signal' in r_grp:
                 r_sig = r_grp['CyclicVoltammetryLegacy_variable_signal']
                 if 'scan_rate_mvpers' in r_sig and r_sig['scan_rate_mvpers'].size > 0:
-                    sr_r = float(r_sig['scan_rate_mvpers'][0])
+                    sr = _decode_scalar(r_sig['scan_rate_mvpers'][()])
+                    if sr is not None:
+                        sr_r = float(sr)
 
             run_name = f'ECSA {sr_r:.0f} mV/s' if sr_r is not None else r_k
             run_cv = CVResult(
@@ -267,57 +342,31 @@ class XYPECParser(MatchingParser):
 
             ecsa_res.runs.append(run_cv)
 
-        return ecsa_res
+        ecsa_entry = ECSAMeasurement(
+            results=[ecsa_res],
+            cell=cell,
+            samples=data.samples if data.samples else None,
+        )
+        ecsa_entry.normalize(self.archive, self.logger)
 
-    def _check_signal_fallbacks(
+        return ecsa_entry
+
+    def _parse_mapping(
         self,
-        sub: h5py.Group,
-        data: ElectrochemicalMapping,
-        surface_area_found: bool,
-        ref_type_found: bool,
-    ) -> tuple[bool, bool]:
-        """Check CV variable signal for electrode area and reference type fallbacks."""
-        cv_sig = None
-        if 'Subprotocol_CyclicVoltammetry' in sub:
-            cv_grp = sub['Subprotocol_CyclicVoltammetry']
-            if 'CyclicVoltammetryLegacy_variable_signal' in cv_grp:
-                cv_sig = cv_grp['CyclicVoltammetryLegacy_variable_signal']
-
-        if cv_sig is not None and data.cell:
-            if not surface_area_found and data.cell.working_electrode:
-                area_val = _extract_legacy_var(
-                    cv_sig,
-                    ['electrode_area', 'surface_area', 'droplet_area', 'area'],
-                )
-                if area_val is not None:
-                    try:
-                        data.cell.working_electrode.surface_area = float(area_val) * (
-                            ureg.centimeter**2
-                        )
-                        surface_area_found = True
-                    except Exception:
-                        pass
-
-            if not ref_type_found and data.cell.reference_electrode:
-                ref_val = _extract_legacy_var(
-                    cv_sig,
-                    [
-                        'reference_electrode',
-                        'reference_type',
-                        'ref_electrode',
-                        'reference_standard',
-                    ],
-                )
-                if ref_val is not None:
-                    ref_str = str(ref_val)
-                    data.cell.reference_electrode.reference_type = ref_str
-                    if ref_str in STANDARD_REFERENCE_POTENTIALS_VS_RHE:
-                        data.cell.reference_electrode.standard_potential_vs_rhe = (
-                            STANDARD_REFERENCE_POTENTIALS_VS_RHE[ref_str] * ureg.volt
-                        )
-                    ref_type_found = True
-
-        return surface_area_found, ref_type_found
+        entry: ElectrochemicalMeasurement,
+        pos_x: float,
+        pos_y: float,
+    ) -> ElectrochemicalMappingResult:
+        """
+        Parse an electrochemical measurement into
+        an electrochemical mapping result.
+        """
+        mapping = ElectrochemicalMappingResult()
+        mapping.reference = entry
+        mapping.x_absolute = pos_x * ureg.millimeter
+        mapping.y_absolute = pos_y * ureg.millimeter
+        mapping.normalize(self.archive, self.logger)
+        return mapping
 
     def parse(  # noqa: PLR0912, PLR0915
         self,
@@ -326,6 +375,10 @@ class XYPECParser(MatchingParser):
         logger: 'BoundLogger',
         child_archives: dict[str, 'EntryArchive'] = None,
     ) -> None:
+
+        self.archive = archive
+        self.logger = logger
+
         logger.info('Parsing XY-PEC CAMELS measurement file', mainfile=mainfile)
 
         if archive.metadata is None:
@@ -340,6 +393,8 @@ class XYPECParser(MatchingParser):
         )
         if not data.name:
             data.name = os.path.splitext(os.path.basename(mainfile))[0]
+        if not archive.metadata.entry_name:
+            archive.metadata.entry_name = data.name
 
         with h5py.File(mainfile, 'r') as hdf:
             if 'CAMELS_entry' not in hdf:
@@ -348,13 +403,18 @@ class XYPECParser(MatchingParser):
                 return
 
             entry = hdf['CAMELS_entry']
-            sample_ref = self._parse_metadata(entry, data)
-            self._parse_cell_and_alignment(entry, data, sample_ref)
+            self._parse_metadata(entry, data)
 
-            if 'data' not in entry or 'primary' not in entry['data']:
-                logger.warning('No primary data group found in CAMELS entry.')
+            if (
+                'data' not in entry
+                or 'ScreeningLoop_variable_signal' not in entry['data']
+                or 'primary' not in entry['data']
+            ):
+                logger.warning('No screening data group found in CAMELS entry.')
                 archive.data = data
                 return
+
+            self._parse_alignment(entry['data']['ScreeningLoop_variable_signal'], data)
 
             primary_grp = entry['data']['primary']
             subprotocol_keys = [
@@ -368,109 +428,32 @@ class XYPECParser(MatchingParser):
                 )
             )
 
-            surface_area_found = False
-            ref_type_found = False
-
-            surface_area_val = None
-            if (
-                data.cell
-                and data.cell.working_electrode
-                and data.cell.working_electrode.surface_area
-            ):
-                surface_area_val = data.cell.working_electrode.surface_area.to(
-                    'centimeter ** 2'
-                ).magnitude
-
-            ref_potential_rhe = None
-            if (
-                data.cell
-                and data.cell.reference_electrode
-                and data.cell.reference_electrode.standard_potential_vs_rhe
-            ):
-                ref_potential_rhe = (
-                    data.cell.reference_electrode.standard_potential_vs_rhe.to(
-                        'volt'
-                    ).magnitude
-                )
-
-            ph_val = None
-            if (
-                data.cell
-                and data.cell.electrolyte
-                and data.cell.electrolyte.ph_value is not None
-            ):
-                ph_val = float(data.cell.electrolyte.ph_value)
-
             for sub_key in subprotocol_keys:
                 sub = primary_grp[sub_key]
-                surface_area_found, ref_type_found = self._check_signal_fallbacks(
-                    sub, data, surface_area_found, ref_type_found
-                )
-                if (
-                    surface_area_val is None
-                    and data.cell
-                    and data.cell.working_electrode
-                    and data.cell.working_electrode.surface_area
-                ):
-                    surface_area_val = data.cell.working_electrode.surface_area.to(
-                        'centimeter ** 2'
-                    ).magnitude
-                if (
-                    ref_potential_rhe is None
-                    and data.cell
-                    and data.cell.reference_electrode
-                ):
-                    ref = data.cell.reference_electrode
-                    if ref.standard_potential_vs_rhe is not None:
-                        ref_potential_rhe = ref.standard_potential_vs_rhe.to(
-                            'volt'
-                        ).magnitude
-                    elif ref.reference_type in STANDARD_REFERENCE_POTENTIALS_VS_RHE:
-                        ref_potential_rhe = STANDARD_REFERENCE_POTENTIALS_VS_RHE[
-                            ref.reference_type
-                        ]
 
-                pos_x = 0.0
-                pos_y = 0.0
-                pos_idx = len(data.results)
-                if 'SinglePointCVfromReservoir_variable_signal' in sub:
-                    sp_sig = sub['SinglePointCVfromReservoir_variable_signal']
-                    if 'position_x' in sp_sig and sp_sig['position_x'].size > 0:
-                        pos_x = float(sp_sig['position_x'][0])
-                    if 'position_y' in sp_sig and sp_sig['position_y'].size > 0:
-                        pos_y = float(sp_sig['position_y'][0])
-                    if 'position_index' in sp_sig and sp_sig['position_index'].size > 0:
-                        pos_idx = int(sp_sig['position_index'][0])
+                var_key = next((k for k in sub if k.endswith('_variable_signal')), None)
+                if not var_key:
+                    logger.warning(f'No variable signal found in {sub_key}')
+                    continue
+                sub_var = sub[var_key]
 
-                cv_mapping = self._parse_cv_step(sub, result_cls=CVMappingResult)
-                if cv_mapping is not None:
-                    cv_mapping.name = f'CV Point {pos_idx}'
-                    cv_mapping.point_index = pos_idx
-                    cv_mapping.x_absolute = pos_x * ureg.millimeter
-                    cv_mapping.y_absolute = pos_y * ureg.millimeter
-                    normalize_cv_result(
-                        cv_mapping,
-                        cell=data.cell,
-                        surface_area_val=surface_area_val,
-                        ref_potential_rhe=ref_potential_rhe,
-                        ph_val=ph_val,
+                try:
+                    cell = self._parse_cell(sub_var)
+                    pos_x, pos_y = self._parse_position(sub_var)
+
+                    cv_entry = self._parse_cv(sub, cell, data)
+                    if cv_entry is not None:
+                        cv_mapping = self._parse_mapping(cv_entry, pos_x, pos_y)
+                        data.results.append(cv_mapping)
+
+                    ecsa_entry = self._parse_ecsa(sub, cell, data)
+                    if ecsa_entry is not None:
+                        ecsa_mapping = self._parse_mapping(ecsa_entry, pos_x, pos_y)
+                        data.results.append(ecsa_mapping)
+                except Exception as exc:
+                    logger.warning(
+                        f'Failed to parse subprotocol point, skipping {sub_key}: {exc}'
                     )
-                    data.results.append(cv_mapping)
-
-                ecsa_mapping = self._parse_ecsa_step(sub, result_cls=ECSAMappingResult)
-                if ecsa_mapping is not None:
-                    ecsa_mapping.name = f'ECSA Point {pos_idx}'
-                    ecsa_mapping.point_index = pos_idx
-                    ecsa_mapping.x_absolute = pos_x * ureg.millimeter
-                    ecsa_mapping.y_absolute = pos_y * ureg.millimeter
-                    normalize_ecsa_result(
-                        ecsa_mapping,
-                        cell=data.cell,
-                        surface_area_val=surface_area_val,
-                        ref_potential_rhe=ref_potential_rhe,
-                        ph_val=ph_val,
-                    )
-                    data.results.append(ecsa_mapping)
 
         archive.data = data
         logger.info(
