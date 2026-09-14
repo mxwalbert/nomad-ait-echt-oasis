@@ -22,19 +22,13 @@ from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization impor
     ElectrochemicalMappingResult,
 )
 
-EXPECTED_POINTS = 5
-EXPECTED_TOTAL_RESULTS = 10
+EXPECTED_POINTS = 2
+EXPECTED_TOTAL_RESULTS = 4
 EXPECTED_FIGURES = 2
 EXPECTED_ECSA_FIGURES = 1
 EXPECTED_ECSA_RUNS = 8
 
-TEST_FILE = os.path.join(
-    '.local',
-    'electrochemical_characterization',
-    'xy_pec',
-    'EASYHAc',
-    'EasyHAC_NiMo_Comb03_ScreeningLoop_CyclicVoltammetry_2026-09-09T13-25-32+02-00.h5',
-)
+TEST_FILE = 'tests/data/xy_pec_test.h5'
 
 
 def test_xy_pec_parser():
@@ -45,9 +39,16 @@ def test_xy_pec_parser():
     archive = EntryArchive(metadata=EntryMetadata(entry_name='test_xy_pec'))
     logger = logging.getLogger('test_xy_pec')
 
-    assert parser.is_mainfile(TEST_FILE, 'application/x-hdf', b'', '')
+    mainfile_keys = parser.is_mainfile(TEST_FILE, 'application/x-hdf', b'', '')
+    assert isinstance(mainfile_keys, list)
+    assert len(mainfile_keys) == EXPECTED_TOTAL_RESULTS
 
-    parser.parse(TEST_FILE, archive, logger)
+    child_archives = {k: EntryArchive() for k in mainfile_keys}
+    parser.parse(TEST_FILE, archive, logger, child_archives=child_archives)
+
+    assert len(child_archives) == EXPECTED_TOTAL_RESULTS
+    for key, child in child_archives.items():
+        assert isinstance(child.data, (CyclicVoltammetry, ECSAMeasurement))
 
     assert isinstance(archive.data, ElectrochemicalMapping)
     assert len(archive.data.results) == EXPECTED_TOTAL_RESULTS
@@ -491,8 +492,8 @@ def test_parse_cv_and_ecsa_parameters(tmp_path):
         for idx, sr_val in enumerate([20.0, 100.0]):
             r_grp = ecsa_grp.create_group(f'Subprotocol_RunCV_{idx}')
             r_grp.create_dataset('matterlab_potentiostat_read_potential', data=v_cv)
-            r_grp.create_dataset('matterlab_potentiostat_read_current', data=i_cv)
-            r_grp.create_dataset('time', data=np.array([0.0, 1.0, 2.0, 3.0, 4.0]))
+            r_grp.create_dataset('matterlab_potentiostat_read_current', data=i_cv * (sr_val / 50.0))
+            r_grp.create_dataset('time', data=np.linspace(0.0, 2000.0 / sr_val, len(v_cv)))
 
             r_sig = r_grp.create_group('CyclicVoltammetryLegacy_variable_signal')
             r_sig.create_dataset('start_v', data=np.array([0.2]))
@@ -543,7 +544,7 @@ def test_parse_cv_and_ecsa_parameters(tmp_path):
     assert r1_param.scan_rate.to('millivolt / second').magnitude == pytest.approx(100.0)
     assert r1_param.number_of_cycles == 2
 
-    for run_cv in ecsa.results[0].runs:
-        assert run_cv.scan_rate is not None
-        assert run_cv.scan_rate.to('volt / second').magnitude == pytest.approx(0.5)
-
+    assert ecsa.results[0].runs[0].scan_rate is not None
+    assert ecsa.results[0].runs[0].scan_rate.to('volt / second').magnitude == pytest.approx(0.02)
+    assert ecsa.results[0].runs[1].scan_rate is not None
+    assert ecsa.results[0].runs[1].scan_rate.to('volt / second').magnitude == pytest.approx(0.1)

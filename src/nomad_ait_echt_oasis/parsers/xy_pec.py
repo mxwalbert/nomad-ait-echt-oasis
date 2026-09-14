@@ -79,9 +79,26 @@ class XYPECParser(MatchingParser):
     and electrochemically active surface area (ECSA) scan rate series at mapped points.
     """
 
+    creates_children = True
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._mainfile_name_re = re.compile(r'^.*\.(h5|hdf5|nxs)$')
+        self.child_archives = None
+
+    def _get_subprotocol_keys(self, primary_grp: h5py.Group) -> list[str]:
+        """
+        Extract and numerically sort all subprotocol group keys from primary.
+        """
+        subprotocol_keys = [
+            k for k in primary_grp.keys() if k.startswith('Subprotocol_RunSubprotocol_')
+        ]
+        subprotocol_keys.sort(
+            key=lambda k: (
+                int(re.search(r'\d+', k).group()) if re.search(r'\d+', k) else 0
+            )
+        )
+        return subprotocol_keys
 
     def is_mainfile(
         self,
@@ -90,7 +107,7 @@ class XYPECParser(MatchingParser):
         buffer: bytes,
         decoded_buffer: str,
         compression: str = None,
-    ) -> bool:
+    ) -> bool | list[str]:
         if not filename.endswith(('.h5', '.hdf5')):
             return False
         try:
@@ -109,7 +126,26 @@ class XYPECParser(MatchingParser):
                     if 'protocol_overview' in md:
                         po = _decode_val(md['protocol_overview'][()]) or ''
                         has_po = 'xy_pec' in po
-                return has_inst or has_pn or has_po
+                if not (has_inst or has_pn or has_po):
+                    return False
+
+                if 'data' not in entry or 'primary' not in entry['data']:
+                    return True
+
+                primary_grp = entry['data']['primary']
+                subprotocol_keys = self._get_subprotocol_keys(primary_grp)
+
+                child_keys = []
+                for sub_key in subprotocol_keys:
+                    sub = primary_grp[sub_key]
+                    if not any(k.endswith('_variable_signal') for k in sub.keys()):
+                        continue
+                    if 'Subprotocol_CyclicVoltammetry' in sub:
+                        child_keys.append(f'{sub_key}/CyclicVoltammetry')
+                    if 'Subprotocol_ECSA' in sub:
+                        child_keys.append(f'{sub_key}/ECSAMeasurement')
+
+                return child_keys if child_keys else True
         except Exception:
             return False
 
@@ -327,6 +363,7 @@ class XYPECParser(MatchingParser):
         sub: h5py.Group,
         cell: ThreeElectrodeCell,
         data: ElectrochemicalMapping,
+        child_archive: 'EntryArchive' = None,
     ) -> CyclicVoltammetry | None:
         """Parse a single cyclic voltammetry measurement entry."""
         if 'Subprotocol_CyclicVoltammetry' not in sub:
@@ -375,7 +412,12 @@ class XYPECParser(MatchingParser):
         if cv_param is not None:
             cv_entry.parameters = cv_param
 
-        cv_entry.normalize(self.archive, self.logger)
+        target_archive = self.archive
+        if child_archive is not None:
+            child_archive.data = cv_entry
+            target_archive = child_archive
+
+        cv_entry.normalize(target_archive, self.logger)
 
         return cv_entry
 
@@ -384,6 +426,7 @@ class XYPECParser(MatchingParser):
         sub: h5py.Group,
         cell: ThreeElectrodeCell,
         data: ElectrochemicalMapping,
+        child_archive: 'EntryArchive' = None,
     ) -> ECSAMeasurement | None:
         """Parse ECSA scan rate series into an ECSA measurement entry."""
         if 'Subprotocol_ECSA' not in sub:
@@ -460,7 +503,12 @@ class XYPECParser(MatchingParser):
         if len(ecsa_params.runs) > 0:
             ecsa_entry.parameters = ecsa_params
 
-        ecsa_entry.normalize(self.archive, self.logger)
+        target_archive = self.archive
+        if child_archive is not None:
+            child_archive.data = ecsa_entry
+            target_archive = child_archive
+
+        ecsa_entry.normalize(target_archive, self.logger)
 
         return ecsa_entry
 
@@ -491,6 +539,10 @@ class XYPECParser(MatchingParser):
 
         self.archive = archive
         self.logger = logger
+
+        if child_archives is None:
+            child_archives = {}
+        self.child_archives = child_archives
 
         logger.info('Parsing XY-PEC CAMELS measurement file', mainfile=mainfile)
 
@@ -530,16 +582,7 @@ class XYPECParser(MatchingParser):
             self._parse_alignment(entry['data']['ScreeningLoop_variable_signal'], data)
 
             primary_grp = entry['data']['primary']
-            subprotocol_keys = [
-                k
-                for k in primary_grp.keys()
-                if k.startswith('Subprotocol_RunSubprotocol_')
-            ]
-            subprotocol_keys.sort(
-                key=lambda k: (
-                    int(re.search(r'\d+', k).group()) if re.search(r'\d+', k) else 0
-                )
-            )
+            subprotocol_keys = self._get_subprotocol_keys(primary_grp)
 
             for sub_key in subprotocol_keys:
                 sub = primary_grp[sub_key]
@@ -554,15 +597,75 @@ class XYPECParser(MatchingParser):
                     cell = self._parse_cell(sub_var)
                     pos_x, pos_y = self._parse_position(sub_var)
 
-                    cv_entry = self._parse_cv(sub, cell, data)
+                    cv_key = f'{sub_key}/CyclicVoltammetry'
+                    cv_child = None
+                    if child_archives is not None:
+                        cv_child = child_archives.get(cv_key) or child_archives.get(
+                            f'{sub_key}/Subprotocol_CyclicVoltammetry'
+                        )
+                        if cv_child is None:
+                            from nomad.datamodel import EntryArchive
+
+                            cv_child = EntryArchive()
+                            child_archives[cv_key] = cv_child
+
+                        if cv_child.metadata is None:
+                            from nomad.datamodel import EntryMetadata
+
+                            cv_child.metadata = EntryMetadata()
+                        if not cv_child.metadata.entry_name:
+                            cv_child.metadata.entry_name = f'{data.name} {cv_key}'
+                        if not cv_child.metadata.mainfile_key:
+                            cv_child.metadata.mainfile_key = cv_key
+                        if not cv_child.metadata.mainfile:
+                            cv_child.metadata.mainfile = mainfile
+
+                    cv_entry = self._parse_cv(sub, cell, data, child_archive=cv_child)
                     if cv_entry is not None:
                         cv_mapping = self._parse_mapping(cv_entry, pos_x, pos_y)
                         data.results.append(cv_mapping)
+                    elif (
+                        cv_child is not None
+                        and cv_key in child_archives
+                        and cv_child.data is None
+                    ):
+                        child_archives.pop(cv_key, None)
 
-                    ecsa_entry = self._parse_ecsa(sub, cell, data)
+                    ecsa_key = f'{sub_key}/ECSAMeasurement'
+                    ecsa_child = None
+                    if child_archives is not None:
+                        ecsa_child = child_archives.get(ecsa_key) or child_archives.get(
+                            f'{sub_key}/Subprotocol_ECSA'
+                        )
+                        if ecsa_child is None:
+                            from nomad.datamodel import EntryArchive
+
+                            ecsa_child = EntryArchive()
+                            child_archives[ecsa_key] = ecsa_child
+
+                        if ecsa_child.metadata is None:
+                            from nomad.datamodel import EntryMetadata
+
+                            ecsa_child.metadata = EntryMetadata()
+                        if not ecsa_child.metadata.entry_name:
+                            ecsa_child.metadata.entry_name = f'{data.name} {ecsa_key}'
+                        if not ecsa_child.metadata.mainfile_key:
+                            ecsa_child.metadata.mainfile_key = ecsa_key
+                        if not ecsa_child.metadata.mainfile:
+                            ecsa_child.metadata.mainfile = mainfile
+
+                    ecsa_entry = self._parse_ecsa(
+                        sub, cell, data, child_archive=ecsa_child
+                    )
                     if ecsa_entry is not None:
                         ecsa_mapping = self._parse_mapping(ecsa_entry, pos_x, pos_y)
                         data.results.append(ecsa_mapping)
+                    elif (
+                        ecsa_child is not None
+                        and ecsa_key in child_archives
+                        and ecsa_child.data is None
+                    ):
+                        child_archives.pop(ecsa_key, None)
                 except Exception as exc:
                     logger.warning(
                         f'Failed to parse subprotocol point, skipping {sub_key}: {exc}'
