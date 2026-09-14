@@ -20,6 +20,7 @@ from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization impor
     ECSAMeasurement,
     ElectrochemicalMapping,
     ElectrochemicalMappingResult,
+    ElectrochemicalMappingStep,
 )
 
 EXPECTED_POINTS = 2
@@ -51,27 +52,27 @@ def test_xy_pec_parser():
         assert isinstance(child.data, (CyclicVoltammetry, ECSAMeasurement))
 
     assert isinstance(archive.data, ElectrochemicalMapping)
-    assert len(archive.data.results) == EXPECTED_TOTAL_RESULTS
+    assert len(archive.data.steps) == EXPECTED_TOTAL_RESULTS
 
     # Run normalizer
     archive.data.normalize(archive, logger)
 
-    cv_results = [
-        r for r in archive.data.results if isinstance(r.reference, CyclicVoltammetry)
+    cv_steps = [
+        s for s in archive.data.steps if isinstance(s.activity, CyclicVoltammetry)
     ]
-    ecsa_results = [
-        r for r in archive.data.results if isinstance(r.reference, ECSAMeasurement)
+    ecsa_steps = [
+        s for s in archive.data.steps if isinstance(s.activity, ECSAMeasurement)
     ]
 
-    assert len(cv_results) == EXPECTED_POINTS
-    assert len(ecsa_results) == EXPECTED_POINTS
+    assert len(cv_steps) == EXPECTED_POINTS
+    assert len(ecsa_steps) == EXPECTED_POINTS
 
-    for cv_map in cv_results:
-        assert isinstance(cv_map, ElectrochemicalMappingResult)
+    for cv_map in cv_steps:
+        assert isinstance(cv_map, ElectrochemicalMappingStep)
         assert cv_map.name is not None and len(cv_map.name) > 0
         assert cv_map.x_absolute is not None
         assert cv_map.y_absolute is not None
-        cv = cv_map.reference
+        cv = cv_map.activity
         assert isinstance(cv, CyclicVoltammetry)
         assert isinstance(cv.parameters, CVParameter)
         assert cv.parameters.initial_potential is not None
@@ -85,12 +86,12 @@ def test_xy_pec_parser():
         assert len(cv_result.cycles) > 0
         assert len(cv_result.figures) == EXPECTED_FIGURES
 
-    for ecsa_map in ecsa_results:
-        assert isinstance(ecsa_map, ElectrochemicalMappingResult)
+    for ecsa_map in ecsa_steps:
+        assert isinstance(ecsa_map, ElectrochemicalMappingStep)
         assert ecsa_map.name is not None and len(ecsa_map.name) > 0
         assert ecsa_map.x_absolute is not None
         assert ecsa_map.y_absolute is not None
-        ecsa = ecsa_map.reference
+        ecsa = ecsa_map.activity
         assert isinstance(ecsa, ECSAMeasurement)
         assert isinstance(ecsa.parameters, ECSAParameter)
         assert len(ecsa.parameters.runs) == EXPECTED_ECSA_RUNS
@@ -276,14 +277,14 @@ def test_parser_metadata_fallbacks_and_elapsed_time(tmp_path):
     assert data.sample_alignment.width.to('millimeter').magnitude == pytest.approx(25.0)
     assert data.sample_alignment.height.to('millimeter').magnitude == pytest.approx(50.0)
 
-    # Check results
-    assert len(data.results) == 2
-    cv_map = data.results[0]
-    assert isinstance(cv_map, ElectrochemicalMappingResult)
+    # Check steps
+    assert len(data.steps) == 2
+    cv_map = data.steps[0]
+    assert isinstance(cv_map, ElectrochemicalMappingStep)
     assert cv_map.x_absolute.to('millimeter').magnitude == pytest.approx(12.5)
     assert cv_map.y_absolute.to('millimeter').magnitude == pytest.approx(25.0)
 
-    cv = cv_map.reference
+    cv = cv_map.activity
     assert isinstance(cv, CyclicVoltammetry)
     assert cv.cell is not None
     assert cv.cell.working_electrode is not None
@@ -297,9 +298,9 @@ def test_parser_metadata_fallbacks_and_elapsed_time(tmp_path):
     assert cv_res.time is not None
     assert len(cv_res.time) == 20
 
-    ecsa_map = data.results[1]
-    assert isinstance(ecsa_map, ElectrochemicalMappingResult)
-    ecsa = ecsa_map.reference
+    ecsa_map = data.steps[1]
+    assert isinstance(ecsa_map, ElectrochemicalMappingStep)
+    ecsa = ecsa_map.activity
     assert isinstance(ecsa, ECSAMeasurement)
     ecsa_res = ecsa.results[0]
     assert isinstance(ecsa_res, ECSAResult)
@@ -344,10 +345,10 @@ def test_parser_subprotocol_skip_cases(tmp_path):
     archive = EntryArchive(metadata=EntryMetadata(entry_name='skip_cases'))
     parser.parse(str(h5_file), archive, logger)
 
-    assert len(archive.data.results) == 1
-    ecsa_map = archive.data.results[0]
-    assert isinstance(ecsa_map, ElectrochemicalMappingResult)
-    ecsa = ecsa_map.reference
+    assert len(archive.data.steps) == 1
+    ecsa_map = archive.data.steps[0]
+    assert isinstance(ecsa_map, ElectrochemicalMappingStep)
+    ecsa = ecsa_map.activity
     assert isinstance(ecsa, ECSAMeasurement)
     assert len(ecsa.results[0].runs) == 0
 
@@ -379,10 +380,10 @@ def test_parser_with_predefined_cell_parameters(tmp_path):
     archive = EntryArchive(metadata=EntryMetadata(entry_name='predefined_cell'))
     parser.parse(str(h5_file), archive, logger)
 
-    assert len(archive.data.results) == 1
-    cv_map = archive.data.results[0]
-    assert isinstance(cv_map, ElectrochemicalMappingResult)
-    cv = cv_map.reference
+    assert len(archive.data.steps) == 1
+    cv_map = archive.data.steps[0]
+    assert isinstance(cv_map, ElectrochemicalMappingStep)
+    cv = cv_map.activity
     assert isinstance(cv, CyclicVoltammetry)
     assert cv.cell.electrolyte.ph_value == 2.0
     assert cv.cell.electrolyte.description == '0.1M H2SO4'
@@ -433,8 +434,8 @@ def test_parser_sample_reference_edge_cases(tmp_path):
         parser.parse(str(h5_file), archive, logger)
 
         data = archive.data
-        assert len(data.results) == 1
-        cv = data.results[0].reference
+        assert len(data.steps) == 1
+        cv = data.steps[0].activity
         assert isinstance(cv, CyclicVoltammetry)
 
         if case_name == 'missing_sample' or case_name == 'empty_sample':
@@ -507,10 +508,10 @@ def test_parse_cv_and_ecsa_parameters(tmp_path):
     parser.parse(str(h5_file), archive, logger)
 
     data = archive.data
-    assert len(data.results) == 2
+    assert len(data.steps) == 2
 
     # Check CV
-    cv = data.results[0].reference
+    cv = data.steps[0].activity
     assert isinstance(cv, CyclicVoltammetry)
     assert isinstance(cv.parameters, CVParameter)
     assert cv.parameters.initial_potential.to('volt').magnitude == pytest.approx(0.0)
@@ -525,7 +526,7 @@ def test_parse_cv_and_ecsa_parameters(tmp_path):
     assert cv_res.scan_rate.to('volt / second').magnitude == pytest.approx(0.5)
 
     # Check ECSA
-    ecsa = data.results[1].reference
+    ecsa = data.steps[1].activity
     assert isinstance(ecsa, ECSAMeasurement)
     assert isinstance(ecsa.parameters, ECSAParameter)
     assert len(ecsa.parameters.runs) == 2

@@ -12,6 +12,7 @@ from nomad.datamodel.metainfo.annotations import (
     ELNComponentEnum,
 )
 from nomad.datamodel.metainfo.basesections import (
+    ActivityStep,
     CompositeSystem,
     CompositeSystemReference,
     Measurement,
@@ -19,6 +20,10 @@ from nomad.datamodel.metainfo.basesections import (
 )
 from nomad.datamodel.metainfo.plot import (
     PlotSection,
+)
+from nomad.datamodel.metainfo.workflow import (
+    Task,
+    TaskReference,
 )
 from nomad.metainfo import (
     MEnum,
@@ -30,7 +35,6 @@ from nomad.metainfo import (
 from nomad_material_processing.solution.general import (
     Solution,
 )
-from nomad_measurements.general import ActivityReference
 from nomad_measurements.mapping.schema import (
     MappingMeasurement,
     MappingResult,
@@ -46,6 +50,9 @@ from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cv import
 from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.ecsa import (
     normalize_ecsa_measurement,
     normalize_ecsa_result,
+)
+from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.mapping import (
+    normalize_electrochemical_mapping,
 )
 from nomad_ait_echt_oasis.schema_packages.infrastructure import (
     LIMSInstrument,
@@ -1128,60 +1135,127 @@ class ECSAMeasurement(ElectrochemicalMeasurement, EntryData):
         normalize_ecsa_measurement(self, archive, logger)
 
 
-class MeasurementReference(ActivityReference):
+class MappingStep(ActivityStep):
     """
-    A section used for referencing a Measurement.
-    """
-
-    reference = Quantity(
-        type=Measurement,
-        description='A reference to a NOMAD `Measurement` entry.',
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.ReferenceEditQuantity,
-            label='Measurement reference',
-        ),
-    )
-
-
-class ElectrochemicalMappingResult(MappingResult, MeasurementReference):
-    """
-    Electrochemical characterization measurement at a single mapped spatial point.
+    A single measurement step at a defined stage/sample coordinate within a mapping run.
     """
 
     m_def = Section(
         description="""
-        Electrochemical characterization measurement at a single mapped spatial point.
+        A single measurement step at a defined stage/sample coordinate 
+        within a mapping run.
         """,
     )
 
-    reference = Quantity(
-        type=ElectrochemicalMeasurement,
-        description='A reference to an `ElectrochemicalMeasurement` entry.',
+    x_absolute = Quantity(
+        type=np.float64,
+        unit='m',
+        description='Absolute x position of the measurement stage.',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            defaultDisplayUnit='mm',
+        ),
+    )
+    y_absolute = Quantity(
+        type=np.float64,
+        unit='m',
+        description='Absolute y position of the measurement stage.',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            defaultDisplayUnit='mm',
+        ),
+    )
+    x_relative = Quantity(
+        type=np.float64,
+        unit='m',
+        description='Relative x position on the sample.',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            defaultDisplayUnit='mm',
+        ),
+    )
+    y_relative = Quantity(
+        type=np.float64,
+        unit='m',
+        description='Relative y position on the sample.',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            defaultDisplayUnit='mm',
+        ),
+    )
+    activity = Quantity(
+        type=Measurement,
+        description='Reference to the stand-alone measurement entry.',
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.ReferenceEditQuantity,
-            label='ElectrochemicalMeasurement reference',
+            label='Measurement Reference',
         ),
     )
 
-    def normalize(self, archive: 'EntryArchive', logger: 'BoundLogger') -> None:
-        """
-        Includes in the name of the result the measurement technique.
-        """
-        super().normalize(archive, logger)
-        if self.reference:
-            technique = type(self.reference).__name__
-            self.name = f'{technique} at {self.name}' if self.name else technique
+    def to_task(self) -> Task:
+        """Link step to the child measurement's workflow for the overview page."""
+        if self.activity and getattr(self.activity, 'm_parent', None):
+            wf2 = getattr(self.activity.m_parent, 'workflow2', None)
+            if wf2 is not None:
+                return TaskReference(name=self.name, task=wf2)
+        return Task(name=self.name, section=self)
+
+
+class ElectrochemicalMappingStep(MappingStep):
+    """
+    A single electrochemical measurement step
+    at a defined stage/sample coordinate within a mapping run.
+    """
+
+    m_def = Section(
+        description="""
+        A single electrochemical measurement step 
+        at a defined stage/sample coordinate within a mapping run.
+        """,
+    )
+
+    activity = Quantity(
+        type=ElectrochemicalMeasurement,
+        description='Reference to the stand-alone electrochemical measurement entry.',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.ReferenceEditQuantity,
+            label='Measurement Reference',
+        ),
+    )
+
+
+class ElectrochemicalMappingResult(MappingResult):
+    """
+    Synthesized electrochemical characterization result
+    at a single mapped spatial point.
+    """
+
+    m_def = Section(
+        description="""
+        Synthesized electrochemical characterization result 
+        at a single mapped spatial point.
+        """,
+    )
 
 
 class ElectrochemicalMapping(MappingMeasurement, EntryData):
     """
-    Electrochemical characterization mapping across multiple sample surface positions.
+    Electrochemical characterization mapping
+    across multiple sample surface positions.
     """
 
     m_def = Section(
         categories=[ElectrochemicalMeasurementCategory],
         description="""
         Electrochemical mapping across multiple sample surface positions.
+        """,
+    )
+
+    steps = SubSection(
+        section_def=ElectrochemicalMappingStep,
+        repeats=True,
+        description="""
+        Ordered list of measurement steps at mapped spatial coordinates.
         """,
     )
 
@@ -1192,6 +1266,11 @@ class ElectrochemicalMapping(MappingMeasurement, EntryData):
         List of electrochemical results at mapped spatial positions.
         """,
     )
+
+    def normalize(self, archive: 'EntryArchive', logger: 'BoundLogger') -> None:
+        """Normalizer for ElectrochemicalMapping."""
+        normalize_electrochemical_mapping(self, archive, logger)
+        super().normalize(archive, logger)
 
 
 m_package.__init_metainfo__()

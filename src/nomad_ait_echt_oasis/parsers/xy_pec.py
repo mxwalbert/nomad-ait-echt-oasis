@@ -22,7 +22,7 @@ from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization impor
     ECSAParameter,
     ECSAResult,
     ElectrochemicalMapping,
-    ElectrochemicalMappingResult,
+    ElectrochemicalMappingStep,
     ElectrochemicalMeasurement,
     Electrolyte,
     ReferenceElectrode,
@@ -517,16 +517,17 @@ class XYPECParser(MatchingParser):
         entry: ElectrochemicalMeasurement,
         pos_x: float,
         pos_y: float,
-    ) -> ElectrochemicalMappingResult:
+        technique: str = 'Measurement',
+    ) -> ElectrochemicalMappingStep:
         """
         Parse an electrochemical measurement into
-        an electrochemical mapping result.
+        an electrochemical mapping step.
         """
-        mapping = ElectrochemicalMappingResult()
-        mapping.reference = entry
+        mapping = ElectrochemicalMappingStep()
+        mapping.activity = entry
+        mapping.name = f'{technique} at stage x = {pos_x:.1f} mm, y = {pos_y:.1f} mm'
         mapping.x_absolute = pos_x * ureg.millimeter
         mapping.y_absolute = pos_y * ureg.millimeter
-        mapping.normalize(self.archive, self.logger)
         return mapping
 
     def parse(  # noqa: PLR0912, PLR0915
@@ -622,8 +623,10 @@ class XYPECParser(MatchingParser):
 
                     cv_entry = self._parse_cv(sub, cell, data, child_archive=cv_child)
                     if cv_entry is not None:
-                        cv_mapping = self._parse_mapping(cv_entry, pos_x, pos_y)
-                        data.results.append(cv_mapping)
+                        cv_mapping = self._parse_mapping(
+                            cv_entry, pos_x, pos_y, technique='Cyclic Voltammetry'
+                        )
+                        data.steps.append(cv_mapping)
                     elif (
                         cv_child is not None
                         and cv_key in child_archives
@@ -658,8 +661,10 @@ class XYPECParser(MatchingParser):
                         sub, cell, data, child_archive=ecsa_child
                     )
                     if ecsa_entry is not None:
-                        ecsa_mapping = self._parse_mapping(ecsa_entry, pos_x, pos_y)
-                        data.results.append(ecsa_mapping)
+                        ecsa_mapping = self._parse_mapping(
+                            ecsa_entry, pos_x, pos_y, technique='ECSA Measurement'
+                        )
+                        data.steps.append(ecsa_mapping)
                     elif (
                         ecsa_child is not None
                         and ecsa_key in child_archives

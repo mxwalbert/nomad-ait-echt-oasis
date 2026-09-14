@@ -2,6 +2,7 @@ from . import (
     cell,
     cv,
     ecsa,
+    mapping,
     result,
 )
 from .cell import (
@@ -17,6 +18,9 @@ from .ecsa import (
     normalize_ecsa_measurement,
     normalize_ecsa_result,
 )
+from .mapping import (
+    normalize_electrochemical_mapping,
+)
 from .result import (
     normalize_measurement_signals,
 )
@@ -26,10 +30,12 @@ __all__ = [
     'cell',
     'cv',
     'ecsa',
+    'mapping',
     'normalize_cv_result',
     'normalize_cyclic_voltammetry',
     'normalize_ecsa_measurement',
     'normalize_ecsa_result',
+    'normalize_electrochemical_mapping',
     'normalize_measurement_signals',
     'normalize_reference_electrode',
     'normalize_three_electrode_cell',

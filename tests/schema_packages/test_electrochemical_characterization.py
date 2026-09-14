@@ -16,7 +16,9 @@ from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization impor
     ECSAMeasurement,
     ECSAParameter,
     ECSAResult,
+    ElectrochemicalMapping,
     ElectrochemicalMappingResult,
+    ElectrochemicalMappingStep,
     ElectrochemicalMeasurementResult,
     Electrolyte,
     FrequencyResponseAnalyser,
@@ -483,5 +485,58 @@ def test_cv_scan_rate_calculation(archive):
     assert cv_res2.scan_rate is None
 
 
+def test_electrochemical_mapping(archive):
+    """
+    Test ElectrochemicalMappingStep, ElectrochemicalMapping, and the
+    normalize_electrochemical_mapping normalizer.
+    """
+    from nomad_measurements.mapping.schema import RectangularSampleAlignment
 
+    cv = CyclicVoltammetry(name='Spot CV')
+    step1 = ElectrochemicalMappingStep(
+        x_absolute=10.0 * ureg.millimeter,
+        y_absolute=25.0 * ureg.millimeter,
+        activity=cv,
+    )
 
+    # to_task fallback when no parent workflow exists
+    task1 = step1.to_task()
+    assert task1.name == step1.name
+
+    # Mapping with RectangularSampleAlignment
+    alignment = RectangularSampleAlignment(
+        width=50.0 * ureg.millimeter,
+        height=50.0 * ureg.millimeter,
+        x_upper_left=0.0 * ureg.millimeter,
+        y_upper_left=50.0 * ureg.millimeter,
+        x_lower_right=50.0 * ureg.millimeter,
+        y_lower_right=0.0 * ureg.millimeter,
+    )
+    mapping = ElectrochemicalMapping(
+        name='Test Mapping',
+        sample_alignment=alignment,
+        steps=[step1],
+    )
+    archive.data = mapping
+    mapping.normalize(archive, None)
+
+    # Verify relative coordinates were computed
+    assert step1.x_relative is not None
+    assert step1.y_relative is not None
+    assert isinstance(step1.x_relative, ureg.Quantity)
+    assert isinstance(step1.y_relative, ureg.Quantity)
+
+    # Verify step.name was auto-generated with technique and coordinates
+    assert step1.name is not None
+    assert 'CyclicVoltammetry' in step1.name
+    assert 'mm' in step1.name
+
+    # Verify workflow2.tasks is populated
+    assert archive.workflow2 is not None
+    assert len(archive.workflow2.tasks) == 1
+    assert 'CyclicVoltammetry' in step1.name
+    assert 'mm' in step1.name
+
+    # Verify workflow2.tasks is populated
+    assert archive.workflow2 is not None
+    assert len(archive.workflow2.tasks) == 1
