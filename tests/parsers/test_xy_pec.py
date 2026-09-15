@@ -74,6 +74,8 @@ def test_xy_pec_parser():
         assert cv_map.y_absolute is not None
         cv = cv_map.activity
         assert isinstance(cv, CyclicVoltammetry)
+        assert cv.name is not None and len(cv.name) > 0
+        assert cv.x_parent_activity == archive.data
         assert isinstance(cv.parameters, CVParameter)
         assert cv.parameters.initial_potential is not None
         assert cv.parameters.lower_switching_potential is not None
@@ -93,6 +95,8 @@ def test_xy_pec_parser():
         assert ecsa_map.y_absolute is not None
         ecsa = ecsa_map.activity
         assert isinstance(ecsa, ECSAMeasurement)
+        assert ecsa.name is not None and len(ecsa.name) > 0
+        assert ecsa.x_parent_activity == archive.data
         assert isinstance(ecsa.parameters, ECSAParameter)
         assert len(ecsa.parameters.runs) == EXPECTED_ECSA_RUNS
         for run_param in ecsa.parameters.runs:
@@ -286,6 +290,8 @@ def test_parser_metadata_fallbacks_and_elapsed_time(tmp_path):
 
     cv = cv_map.activity
     assert isinstance(cv, CyclicVoltammetry)
+    assert cv.name is not None
+    assert cv.x_parent_activity == data
     assert cv.cell is not None
     assert cv.cell.working_electrode is not None
     assert cv.cell.reference_electrode.reference_type == 'Reversible Hydrogen Electrode (RHE)'
@@ -302,6 +308,8 @@ def test_parser_metadata_fallbacks_and_elapsed_time(tmp_path):
     assert isinstance(ecsa_map, ElectrochemicalMappingStep)
     ecsa = ecsa_map.activity
     assert isinstance(ecsa, ECSAMeasurement)
+    assert ecsa.name is not None
+    assert ecsa.x_parent_activity == data
     ecsa_res = ecsa.results[0]
     assert isinstance(ecsa_res, ECSAResult)
     assert len(ecsa_res.runs) == 1

@@ -72,6 +72,18 @@ def _extract_legacy_var(grp, candidate_keys):
     return None
 
 
+def _get_float(grp: h5py.Group | None, key: str) -> float | None:
+    """Safely extract a float from a hdf5 group."""
+    if key in grp and grp[key].size > 0:
+        val = _decode_scalar(grp[key][()])
+        if val is not None:
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return None
+    return None
+
+
 class XYPECParser(MatchingParser):
     """
     Parser for NOMAD CAMELS measurement files from the XY-PEC instrument.
@@ -267,74 +279,38 @@ class XYPECParser(MatchingParser):
                 pos_y = float(py)
         return pos_x, pos_y
 
-    def _parse_cv_parameters(  # noqa: PLR0912, PLR0915
+    def _parse_cv_parameters(
         self,
         sig_grp: h5py.Group | None,
         v_arr: np.ndarray | None = None,
-    ) -> CVParameter | None:
+    ) -> CVParameter:
         """Parse CVParameter from a CyclicVoltammetryLegacy_variable_signal group."""
-        if sig_grp is None:
-            return None
-
         cv_param = CVParameter()
-        has_any = False
+        if sig_grp is None:
+            return cv_param
 
-        def _get_float(key: str) -> float | None:
-            if key in sig_grp and sig_grp[key].size > 0:
-                val = _decode_scalar(sig_grp[key][()])
-                if val is not None:
-                    try:
-                        return float(val)
-                    except (ValueError, TypeError):
-                        return None
-            return None
+        volt_mappings = {
+            'start_v': 'initial_potential',
+            'stop_v': 'final_potential',
+            'min_v': 'lower_switching_potential',
+            'max_v': 'upper_switching_potential',
+        }
+        for key, attr in volt_mappings.items():
+            val = _get_float(sig_grp, key)
+            if val is not None:
+                setattr(cv_param, attr, val * ureg.volt)
 
-        # start_v -> initial_potential
-        val = _get_float('start_v')
-        if val is not None:
-            cv_param.initial_potential = val * ureg.volt
-            has_any = True
-
-        # stop_v -> final_potential
-        val = _get_float('stop_v')
-        if val is not None:
-            cv_param.final_potential = val * ureg.volt
-            has_any = True
-
-        # min_v -> lower_switching_potential
-        val = _get_float('min_v')
-        if val is not None:
-            cv_param.lower_switching_potential = val * ureg.volt
-            has_any = True
-
-        # max_v -> upper_switching_potential
-        val = _get_float('max_v')
-        if val is not None:
-            cv_param.upper_switching_potential = val * ureg.volt
-            has_any = True
-
-        # num_cycles -> number_of_cycles
-        val = _get_float('num_cycles')
+        val = _get_float(sig_grp, 'num_cycles')
         if val is not None:
             cv_param.number_of_cycles = int(round(val))
-            has_any = True
 
-        # scan_rate_mvpers -> scan_rate
-        val = _get_float('scan_rate_mvpers')
+        val = _get_float(sig_grp, 'scan_rate_mvpers')
         if val is not None:
             cv_param.scan_rate = val * (ureg.millivolt / ureg.second)
-            has_any = True
 
-        # step_v / step_potential -> step_potential
-        val = _get_float('step_v')
-        if val is None:
-            val = _get_float('step_potential')
+        val = _get_float(sig_grp, 'step_v') or _get_float(sig_grp, 'step_potential')
         if val is not None:
             cv_param.step_potential = val * ureg.volt
-            has_any = True
-
-        if not has_any:
-            return None
 
         # Determine initial scan direction
         if v_arr is not None and len(v_arr) > 1:
@@ -363,6 +339,7 @@ class XYPECParser(MatchingParser):
         sub: h5py.Group,
         cell: ThreeElectrodeCell,
         data: ElectrochemicalMapping,
+        name: str | None = None,
         child_archive: 'EntryArchive' = None,
     ) -> CyclicVoltammetry | None:
         """Parse a single cyclic voltammetry measurement entry."""
@@ -404,11 +381,21 @@ class XYPECParser(MatchingParser):
         if t_arr is not None:
             cv_res.time = t_arr * ureg.second
 
+        cv_name = name or (
+            f'{data.name} CyclicVoltammetry'
+            if data and data.name
+            else 'CyclicVoltammetry'
+        )
+
         cv_entry = CyclicVoltammetry(
+            name=cv_name,
             results=[cv_res],
             cell=cell,
             samples=data.samples if data.samples else None,
         )
+        if data is not None:
+            cv_entry.x_parent_activity = data
+
         if cv_param is not None:
             cv_entry.parameters = cv_param
 
@@ -421,11 +408,12 @@ class XYPECParser(MatchingParser):
 
         return cv_entry
 
-    def _parse_ecsa(  # noqa PLR0912
+    def _parse_ecsa(  # noqa: PLR0912
         self,
         sub: h5py.Group,
         cell: ThreeElectrodeCell,
         data: ElectrochemicalMapping,
+        name: str | None = None,
         child_archive: 'EntryArchive' = None,
     ) -> ECSAMeasurement | None:
         """Parse ECSA scan rate series into an ECSA measurement entry."""
@@ -495,11 +483,19 @@ class XYPECParser(MatchingParser):
 
             ecsa_res.runs.append(run_cv)
 
+        ecsa_name = name or (
+            f'{data.name} ECSAMeasurement' if data and data.name else 'ECSAMeasurement'
+        )
+
         ecsa_entry = ECSAMeasurement(
+            name=ecsa_name,
             results=[ecsa_res],
             cell=cell,
             samples=data.samples if data.samples else None,
         )
+        if data is not None:
+            ecsa_entry.x_parent_activity = data
+
         if len(ecsa_params.runs) > 0:
             ecsa_entry.parameters = ecsa_params
 
@@ -599,6 +595,7 @@ class XYPECParser(MatchingParser):
                     pos_x, pos_y = self._parse_position(sub_var)
 
                     cv_key = f'{sub_key}/CyclicVoltammetry'
+                    cv_name = f'{data.name} {cv_key}'
                     cv_child = None
                     if child_archives is not None:
                         cv_child = child_archives.get(cv_key) or child_archives.get(
@@ -615,13 +612,15 @@ class XYPECParser(MatchingParser):
 
                             cv_child.metadata = EntryMetadata()
                         if not cv_child.metadata.entry_name:
-                            cv_child.metadata.entry_name = f'{data.name} {cv_key}'
+                            cv_child.metadata.entry_name = cv_name
                         if not cv_child.metadata.mainfile_key:
                             cv_child.metadata.mainfile_key = cv_key
                         if not cv_child.metadata.mainfile:
                             cv_child.metadata.mainfile = mainfile
 
-                    cv_entry = self._parse_cv(sub, cell, data, child_archive=cv_child)
+                    cv_entry = self._parse_cv(
+                        sub, cell, data, name=cv_name, child_archive=cv_child
+                    )
                     if cv_entry is not None:
                         cv_mapping = self._parse_mapping(
                             cv_entry, pos_x, pos_y, technique='Cyclic Voltammetry'
@@ -635,6 +634,7 @@ class XYPECParser(MatchingParser):
                         child_archives.pop(cv_key, None)
 
                     ecsa_key = f'{sub_key}/ECSAMeasurement'
+                    ecsa_name = f'{data.name} {ecsa_key}'
                     ecsa_child = None
                     if child_archives is not None:
                         ecsa_child = child_archives.get(ecsa_key) or child_archives.get(
@@ -651,14 +651,14 @@ class XYPECParser(MatchingParser):
 
                             ecsa_child.metadata = EntryMetadata()
                         if not ecsa_child.metadata.entry_name:
-                            ecsa_child.metadata.entry_name = f'{data.name} {ecsa_key}'
+                            ecsa_child.metadata.entry_name = ecsa_name
                         if not ecsa_child.metadata.mainfile_key:
                             ecsa_child.metadata.mainfile_key = ecsa_key
                         if not ecsa_child.metadata.mainfile:
                             ecsa_child.metadata.mainfile = mainfile
 
                     ecsa_entry = self._parse_ecsa(
-                        sub, cell, data, child_archive=ecsa_child
+                        sub, cell, data, name=ecsa_name, child_archive=ecsa_child
                     )
                     if ecsa_entry is not None:
                         ecsa_mapping = self._parse_mapping(
@@ -679,5 +679,5 @@ class XYPECParser(MatchingParser):
         archive.data = data
         logger.info(
             'XY-PEC measurement parsed successfully',
-            n_points=len(data.results),
+            n_points=len(data.steps),
         )

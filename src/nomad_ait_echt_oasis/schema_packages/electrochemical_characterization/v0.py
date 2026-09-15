@@ -12,6 +12,7 @@ from nomad.datamodel.metainfo.annotations import (
     ELNComponentEnum,
 )
 from nomad.datamodel.metainfo.basesections import (
+    Activity,
     ActivityStep,
     CompositeSystem,
     CompositeSystemReference,
@@ -1135,6 +1136,20 @@ class ECSAMeasurement(ElectrochemicalMeasurement, EntryData):
         normalize_ecsa_measurement(self, archive, logger)
 
 
+class ReferencedActivity(Activity):
+    """
+    Activity that is referenced from another activity.
+    Extends the Activity section with a reference to the parent.
+    """
+
+    m_def = Section(extends_base_section=True)
+
+    x_parent_activity = Quantity(
+        type=Activity,
+        description='Reference to the parent activity.',
+    )
+
+
 class MappingStep(ActivityStep):
     """
     A single measurement step at a defined stage/sample coordinate within a mapping run.
@@ -1219,7 +1234,7 @@ class ElectrochemicalMappingStep(MappingStep):
         description='Reference to the stand-alone electrochemical measurement entry.',
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.ReferenceEditQuantity,
-            label='Measurement Reference',
+            label='Measurement reference',
         ),
     )
 
