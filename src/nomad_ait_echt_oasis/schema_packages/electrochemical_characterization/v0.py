@@ -99,20 +99,6 @@ CD_UNIT = 'milliampere / centimeter ** 2'
 C_UNIT = 'milliampere'
 
 
-class ReferencedActivity(Activity):
-    """
-    Activity that is referenced from another activity.
-    Extends the Activity section with a reference to the parent.
-    """
-
-    m_def = Section(extends_base_section=True)
-
-    x_parent_activity = Quantity(
-        type=Activity,
-        description='Reference to the parent activity.',
-    )
-
-
 # --- Categories ---
 class ElectrochemicalMeasurementCategory(EntryDataCategory):
     """
@@ -662,6 +648,11 @@ class ElectrochemicalMeasurement(Measurement):
         description="""
         Parameters of the electrochemical measurement.
         """,
+    )
+
+    x_parent_activity = Quantity(
+        type=Activity,
+        description='Reference to the parent activity.',
     )
 
     def normalize(self, archive: 'EntryArchive', logger: 'BoundLogger') -> None:

@@ -47,8 +47,8 @@ def get_quantity_scalar(
 
 
 def build_scatter_trace(  # noqa: PLR0913
-    x: np.ndarray,
-    y: np.ndarray,
+    x: Any,
+    y: Any,
     name: str,
     yaxis: str | None = None,
     mode: str = 'lines',
@@ -57,8 +57,8 @@ def build_scatter_trace(  # noqa: PLR0913
 ) -> go.Scatter:
     """Helper to construct a Plotly Scatter trace cleanly."""
     trace_kwargs: dict[str, Any] = {
-        'x': x,
-        'y': y,
+        'x': x.tolist() if isinstance(x, np.ndarray) else x,
+        'y': y.tolist() if isinstance(y, np.ndarray) else y,
         'mode': mode,
         'name': name,
     }

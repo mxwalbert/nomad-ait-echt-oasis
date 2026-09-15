@@ -282,6 +282,13 @@ def test_evaluate_run_capacitance_and_overlay():
     assert 'Anodic Fit' in trace_names
     assert 'Cathodic Fit' in trace_names
 
+    # Verify that all trace data is serialized to Python lists (not np.ndarray) for msgpack
+    for trace in volt_fig.figure.get('data', []):
+        assert isinstance(trace.get('x'), list)
+        assert isinstance(trace.get('y'), list)
+        assert not isinstance(trace.get('x'), np.ndarray)
+        assert not isinstance(trace.get('y'), np.ndarray)
+
 
 def test_ecsa_result_cycle_selection_and_arc_regression():
     """Test full ECSA normalization with arc regression, cycle selection override, and Cdl fit."""

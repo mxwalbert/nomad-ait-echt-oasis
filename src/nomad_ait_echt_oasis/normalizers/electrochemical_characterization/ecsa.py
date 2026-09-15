@@ -176,12 +176,23 @@ def add_capacitance_fits_to_figure(  # noqa: PLR0913
         ),
     ]
 
-    fig_data = volt_fig.figure['data']
-    volt_fig.figure['data'] = [
+    fig_dict = dict(volt_fig.figure)
+    fig_data = fig_dict.get('data', [])
+    clean_traces = [
         t
         for t in fig_data
         if isinstance(t, dict) and t.get('name') not in ('Anodic Fit', 'Cathodic Fit')
-    ] + [t.to_plotly_json() for t in traces]
+    ]
+    for trace in traces:
+        t_json = trace.to_plotly_json()
+        if isinstance(t_json.get('x'), np.ndarray):
+            t_json['x'] = t_json['x'].tolist()
+        if isinstance(t_json.get('y'), np.ndarray):
+            t_json['y'] = t_json['y'].tolist()
+        clean_traces.append(t_json)
+
+    fig_dict['data'] = clean_traces
+    volt_fig.figure = fig_dict
 
 
 def evaluate_run_capacitance(
