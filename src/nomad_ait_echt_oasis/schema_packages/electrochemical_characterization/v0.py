@@ -751,11 +751,6 @@ class VoltammetryParameter(ElectrochemicalMeasurementParameter):
         description="""
         Starting electric potential of the sweep.
         """,
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            defaultDisplayUnit='volt',
-            label='Initial Potential',
-        ),
     )
 
     final_potential = Quantity(
@@ -764,11 +759,6 @@ class VoltammetryParameter(ElectrochemicalMeasurementParameter):
         description="""
         Ending electric potential of the sweep.
         """,
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            defaultDisplayUnit='volt',
-            label='Final Potential',
-        ),
     )
 
     scan_rate = Quantity(
@@ -777,11 +767,6 @@ class VoltammetryParameter(ElectrochemicalMeasurementParameter):
         description="""
         Rate of potential change with time.
         """,
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            defaultDisplayUnit='millivolt / second',
-            label='Scan Rate',
-        ),
     )
 
     step_potential = Quantity(
@@ -790,11 +775,6 @@ class VoltammetryParameter(ElectrochemicalMeasurementParameter):
         description="""
         Discrete potential step increment between successive data sampling points.
         """,
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            defaultDisplayUnit='millivolt',
-            label='Step Potential',
-        ),
     )
 
 
@@ -816,11 +796,6 @@ class CVParameter(VoltammetryParameter):
         description="""
         Lower vertex potential where scan direction reverses.
         """,
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            defaultDisplayUnit='volt',
-            label='Lower Switching Potential',
-        ),
     )
 
     upper_switching_potential = Quantity(
@@ -829,11 +804,6 @@ class CVParameter(VoltammetryParameter):
         description="""
         Upper vertex potential where scan direction reverses.
         """,
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            defaultDisplayUnit='volt',
-            label='Upper Switching Potential',
-        ),
     )
 
     initial_scan_direction = Quantity(
@@ -843,10 +813,6 @@ class CVParameter(VoltammetryParameter):
         Direction of the initial potential sweep
         (positive = anodic, negative = cathodic).
         """,
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.EnumEditQuantity,
-            label='Initial Scan Direction',
-        ),
     )
 
     number_of_cycles = Quantity(
@@ -855,10 +821,6 @@ class CVParameter(VoltammetryParameter):
         description="""
         Total number of programmed cyclic sweeps (echem:TotalNumberOfCycles).
         """,
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            label='Number of Cycles',
-        ),
     )
 
 
@@ -917,18 +879,6 @@ class CVResult(ElectrochemicalMeasurementResult, PlotSection):
         type=float,
         unit='volt / second',
         description='Scan rate of the cyclic voltammetric sweep.',
-    )
-
-    cycle_selection = Quantity(
-        type=str,
-        description="""
-        Python slice syntax (e.g., '2:6', '1:', ':-1') specifying which cycles
-        to select.
-        """,
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.StringEditQuantity,
-            label='Cycle Selection',
-        ),
     )
 
 
@@ -1060,32 +1010,6 @@ class ECSAResult(ElectrochemicalMeasurementResult, PlotSection):
         """,
     )
 
-    cycle_selection = Quantity(
-        type=str,
-        description="""
-        Default Python slice syntax (e.g., '2:6', '1:', ':-1') specifying which cycles
-        to evaluate for double-layer capacitance across all runs, unless overridden 
-        on individual runs.
-        """,
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.StringEditQuantity,
-            label='Default Cycle Selection',
-        ),
-    )
-
-    arc_width_fraction = Quantity(
-        type=float,
-        default=0.5,
-        description="""
-        Fraction of the potential arc width centered at midpoint (0.0 < width <= 1.0)
-        considered for the anodic and cathodic arc linear regressions.
-        """,
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            label='Considered Arc Width Fraction',
-        ),
-    )
-
     scan_rates = Quantity(
         type=np.float64,
         shape=['*'],
@@ -1109,28 +1033,6 @@ class ECSAResult(ElectrochemicalMeasurementResult, PlotSection):
         unit='farad',
         description="""
         Double layer capacitance (Cdl) from charging current slope.
-        """,
-    )
-
-    specific_capacitance = Quantity(
-        type=float,
-        unit='farad / centimeter ** 2',
-        description="""
-        Specific capacitance (Cs) of a flat surface of the material, 
-        used to calculate ECSA.
-        """,
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            defaultDisplayUnit='microfarad / centimeter ** 2',
-            label='Specific Capacitance (Cs)',
-        ),
-    )
-
-    electrochemical_surface_area = Quantity(
-        type=float,
-        unit='centimeter ** 2',
-        description="""
-        Electrochemically active surface area (ECSA = Cdl / Cs).
         """,
     )
 

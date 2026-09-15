@@ -44,21 +44,12 @@ def extract_anodic_cathodic_arcs(
     if len(v_arr) < MIN_DATA_POINTS or len(i_arr) < MIN_DATA_POINTS:
         return np.array([]), np.array([]), np.array([]), np.array([])
 
-    i_min = int(np.argmin(v_arr))
-    i_max = int(np.argmax(v_arr))
+    grad = np.gradient(v_arr)
+    tol = 1e-7
 
-    if i_min == i_max:
-        return np.array([]), np.array([]), np.array([]), np.array([])
-
-    n = len(v_arr)
-    if i_min < i_max:
-        idx_anod = np.arange(i_min, i_max + 1)
-        idx_cath = np.concatenate([np.arange(i_max, n), np.arange(0, i_min + 1)])
-    else:
-        idx_cath = np.arange(i_max, i_min + 1)
-        idx_anod = np.concatenate([np.arange(i_min, n), np.arange(0, i_max + 1)])
-
-    return v_arr[idx_anod], i_arr[idx_anod], v_arr[idx_cath], i_arr[idx_cath]
+    anod_mask = grad > tol
+    cath_mask = grad < -tol
+    return v_arr[anod_mask], i_arr[anod_mask], v_arr[cath_mask], i_arr[cath_mask]
 
 
 def filter_arc_window(
@@ -197,7 +188,7 @@ def add_capacitance_fits_to_figure(  # noqa: PLR0913
 
 def evaluate_run_capacitance(
     run: Any,
-    default_cycle_selection: str | None = None,
+    cycle_selection: str | None = None,
     width_fraction: float = 0.5,
     surface_area: float | None = None,
 ) -> float | None:
@@ -206,15 +197,15 @@ def evaluate_run_capacitance(
     potential window, perform linear regressions, compute capacitive current distance,
     and update run's Plotly voltammogram with the fit lines.
     """
-    eff_cycle_sel = getattr(run, 'cycle_selection', None) or default_cycle_selection
     cycles = getattr(run, 'cycles', None) or (
         [run] if getattr(run, 'potential', None) is not None else []
     )
-    selected_cycles = cycles[parse_cycle_slice(eff_cycle_sel)] if cycles else []
+    selected_cycles = cycles[parse_cycle_slice(cycle_selection)] if cycles else []
     if not selected_cycles:
         return None
 
     anod_data, cath_data, v_mids = [], [], []
+    full_mins, full_maxs = [], []
 
     for cyc in selected_cycles:
         v_c = get_quantity_array(cyc.potential, 'volt')
@@ -222,16 +213,21 @@ def evaluate_run_capacitance(
         if v_c is None or i_c is None or len(v_c) < MIN_DATA_POINTS:
             continue
 
-        v_min, v_max = float(np.min(v_c)), float(np.max(v_c))
-        if v_max <= v_min:
+        v_min_cyc, v_max_cyc = float(np.min(v_c)), float(np.max(v_c))
+        if v_max_cyc <= v_min_cyc:
             continue
-        v_mid = (v_min + v_max) / 2.0
+
+        full_mins.append(v_min_cyc)
+        full_maxs.append(v_max_cyc)
+
+        v_mid = (v_min_cyc + v_max_cyc) / 2.0
+        v_span = v_max_cyc - v_min_cyc
         v_mids.append(v_mid)
 
         v_a, i_a, v_c_arc, i_c_arc = extract_anodic_cathodic_arcs(v_c, i_c)
-        v_a_f, i_a_f = filter_arc_window(v_a, i_a, v_mid, v_max - v_min, width_fraction)
+        v_a_f, i_a_f = filter_arc_window(v_a, i_a, v_mid, v_span, width_fraction)
         v_c_f, i_c_f = filter_arc_window(
-            v_c_arc, i_c_arc, v_mid, v_max - v_min, width_fraction
+            v_c_arc, i_c_arc, v_mid, v_span, width_fraction
         )
 
         if len(v_a_f) > 0:
@@ -279,6 +275,8 @@ def evaluate_run_capacitance(
 def evaluate_capacitance(
     target: 'ECSAResult',
     surface_area_val: float | None = None,
+    cycle_selection: str | None = None,
+    width_fraction: float = 0.5,
 ) -> None:
     """
     Estimate capacitive charging currents, fit double layer capacitance,
@@ -288,11 +286,6 @@ def evaluate_capacitance(
     v_rates = []
     i_caps = []
 
-    default_cycle_sel = getattr(target, 'cycle_selection', None)
-    w_fraction = getattr(target, 'arc_width_fraction', None)
-    if w_fraction is None:
-        w_fraction = 0.5
-
     for run in runs:
         sr_val = get_quantity_scalar(getattr(run, 'scan_rate', None), 'volt / second')
         if sr_val is None:
@@ -300,8 +293,8 @@ def evaluate_capacitance(
 
         i_cap = evaluate_run_capacitance(
             run,
-            default_cycle_selection=default_cycle_sel,
-            width_fraction=w_fraction,
+            cycle_selection=cycle_selection,
+            width_fraction=width_fraction,
             surface_area=surface_area_val,
         )
         if i_cap is not None:
@@ -319,16 +312,6 @@ def evaluate_capacitance(
         slope, _ = np.polyfit(rates_sorted, caps_sorted, 1)
         if slope > 0:
             target.double_layer_capacitance = float(slope) * ureg.farad
-
-        # Calculate electrochemical surface area if specific capacitance is provided
-        if (
-            target.double_layer_capacitance is not None
-            and getattr(target, 'specific_capacitance', None) is not None
-            and target.specific_capacitance.magnitude > 0
-        ):
-            target.electrochemical_surface_area = (
-                target.double_layer_capacitance / target.specific_capacitance
-            ).to('centimeter ** 2')
 
 
 def generate_ecsa_plotly_figures(target: 'ECSAResult') -> list[PlotlyFigure]:
@@ -381,12 +364,15 @@ def generate_ecsa_plotly_figures(target: 'ECSAResult') -> list[PlotlyFigure]:
     return figures
 
 
-def normalize_ecsa_result(
+def normalize_ecsa_result(  # noqa: PLR0913
     result: 'ECSAResult',
     cell: Any = None,
     surface_area_val: float | None = None,
     ref_potential_rhe: float | None = None,
     ph_val: float | None = None,
+    parameters: Any = None,
+    cycle_selection: str | None = None,
+    width_fraction: float = 0.5,
 ) -> None:
     """Normalize each CV run in an ECSAResult, fit capacitance, and build figures."""
     if surface_area_val is None and cell is not None:
@@ -395,17 +381,26 @@ def normalize_ecsa_result(
         )
 
     runs = getattr(result, 'runs', None) or getattr(result, 'results', [])
-    for run in runs:
+    param_runs = getattr(parameters, 'runs', []) if parameters is not None else []
+    for idx, run in enumerate(runs):
+        run_param = param_runs[idx] if idx < len(param_runs) else None
         normalize_cv_result(
             run,
             cell=cell,
             surface_area_val=surface_area_val,
             ref_potential_rhe=ref_potential_rhe,
             ph_val=ph_val,
+            parameters=run_param,
+            cycle_selection=cycle_selection,
         )
 
     if runs:
-        evaluate_capacitance(result, surface_area_val=surface_area_val)
+        evaluate_capacitance(
+            result,
+            surface_area_val=surface_area_val,
+            cycle_selection=cycle_selection,
+            width_fraction=width_fraction,
+        )
         result.figures = generate_ecsa_plotly_figures(result)
 
 
@@ -413,6 +408,8 @@ def normalize_ecsa_measurement(
     ecsa: 'ECSAMeasurement',
     archive: 'EntryArchive' = None,
     logger: 'BoundLogger' = None,
+    cycle_selection: str | None = None,
+    width_fraction: float = 0.5,
 ) -> None:
     """
     Extract cell parameters and normalize all CV results
@@ -421,5 +418,12 @@ def normalize_ecsa_measurement(
     if getattr(ecsa, 'cell', None) is not None:
         normalize_three_electrode_cell(ecsa.cell, archive, logger)
 
+    params = getattr(ecsa, 'parameters', None)
     for res in getattr(ecsa, 'results', None) or []:
-        normalize_ecsa_result(res, cell=ecsa.cell)
+        normalize_ecsa_result(
+            res,
+            cell=ecsa.cell,
+            parameters=params,
+            cycle_selection=cycle_selection,
+            width_fraction=width_fraction,
+        )

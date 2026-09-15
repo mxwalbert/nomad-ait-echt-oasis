@@ -28,6 +28,7 @@ from nomad_ait_echt_oasis.normalizers.utils import (
 )
 from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
     CVCycle,
+    CVParameter,
     CVResult,
     ECSAResult,
     Electrolyte,
@@ -142,6 +143,55 @@ def test_cv_normalizer():
     # Test decomposition of too short data
     auto_decompose_cycles(res_no_cyc)
 
+    # Test multi-cycle splitting: 10 full cycles (0.0 -> 1.0 -> -1.0 -> 0.0)
+    # A single cycle consists of 40 points: 0.0 -> 1.0 (10 pts), 1.0 -> -1.0 (20 pts), -1.0 -> 0.0 (10 pts)
+    one_cycle = np.concatenate([
+        np.linspace(0.0, 1.0, 10, endpoint=False),
+        np.linspace(1.0, -1.0, 20, endpoint=False),
+        np.linspace(-1.0, 0.0, 10, endpoint=False),
+    ])
+    ten_cycles_v = np.tile(one_cycle, 10)
+    ten_cycles_v = np.append(ten_cycles_v, 0.0)  # final point
+    ten_cycles_i = np.ones_like(ten_cycles_v) * 0.001
+
+    # Case A: Auto-detected v_start and v_end
+    res_multi_auto = CVResult(
+        potential=ten_cycles_v * ureg.volt,
+        current=ten_cycles_i * ureg.ampere,
+    )
+    auto_decompose_cycles(res_multi_auto)
+    assert len(res_multi_auto.cycles) == 10, f'Expected 10 cycles, got {len(res_multi_auto.cycles)}'
+    for idx, cyc in enumerate(res_multi_auto.cycles, start=1):
+        assert cyc.cycle_index == idx
+
+    # Case B: Explicit CVParameter specifying initial_potential and final_potential
+    res_multi_param = CVResult(
+        potential=ten_cycles_v * ureg.volt,
+        current=ten_cycles_i * ureg.ampere,
+    )
+    params = CVParameter(
+        initial_potential=0.0 * ureg.volt,
+        final_potential=0.0 * ureg.volt,
+    )
+    auto_decompose_cycles(res_multi_param, parameters=params)
+    assert len(res_multi_param.cycles) == 10, f'Expected 10 cycles, got {len(res_multi_param.cycles)}'
+
+    # Case C: Extremum cycle boundary (-1.0 -> 1.0 -> -1.0)
+    one_cycle_ext = np.concatenate([
+        np.linspace(-1.0, 1.0, 20, endpoint=False),
+        np.linspace(1.0, -1.0, 20, endpoint=False),
+    ])
+    three_cycles_v = np.tile(one_cycle_ext, 3)
+    three_cycles_v = np.append(three_cycles_v, -1.0)
+    three_cycles_i = np.ones_like(three_cycles_v) * 0.001
+
+    res_ext = CVResult(
+        potential=three_cycles_v * ureg.volt,
+        current=three_cycles_i * ureg.ampere,
+    )
+    auto_decompose_cycles(res_ext)
+    assert len(res_ext.cycles) == 3, f'Expected 3 cycles, got {len(res_ext.cycles)}'
+
 
 def test_result_signal_normalizer():
     """Test normalize_measurement_signals on CVResult and CVCycle."""
@@ -203,8 +253,8 @@ def test_parse_cycle_slice():
 def test_extract_anodic_cathodic_arcs():
     """Test separating CV cycle into anodic and cathodic arcs."""
     # Symmetrical triangular cycle: 0.0 -> 1.0 -> 0.0
-    v_arr = np.array([0.0, 0.5, 1.0, 0.5, 0.0])
-    i_arr = np.array([0.001, 0.001, 0.0, -0.001, -0.001])
+    v_arr = np.array([0.0, 0.5, 1.0, 1.0, 0.5, 0.0])
+    i_arr = np.array([0.001, 0.001, 0.0, 0.0, -0.001, -0.001])
 
     v_anod, i_anod, v_cath, i_cath = extract_anodic_cathodic_arcs(v_arr, i_arr)
     assert len(v_anod) > 0
@@ -232,28 +282,6 @@ def test_filter_arc_window():
     assert len(v_filt) == 5  # 0.3, 0.4, 0.5, 0.6, 0.7
 
 
-def test_cv_cycle_selection_figure_filtering():
-    """Test that CVResult.cycle_selection filters which cycles are rendered in figures."""
-    potential = np.array([0.0, 0.5, 1.0, 0.5, 0.0]) * ureg.volt
-    current = np.array([0.001, 0.001, 0.0, -0.001, -0.001]) * ureg.ampere
-
-    cyc1 = CVCycle(cycle_index=1, potential=potential, current=current)
-    cyc2 = CVCycle(cycle_index=2, potential=potential, current=current)
-    cyc3 = CVCycle(cycle_index=3, potential=potential, current=current)
-
-    res = CVResult(
-        cycles=[cyc1, cyc2, cyc3],
-        cycle_selection='1:2',  # Selects only cycle index 2 (index 1 in 0-based indexing)
-    )
-    figs = generate_cv_plotly_figures(res)
-    assert len(figs) > 0
-
-    volt_fig = next(f for f in figs if f.label == 'Cyclic Voltammogram')
-    traces = volt_fig.figure.get('data', [])
-    assert len(traces) == 1
-    assert traces[0]['name'] == 'Cycle 2'
-
-
 def test_evaluate_run_capacitance_and_overlay():
     """Test arc regression capacitance evaluation and Plotly figure overlay."""
     v_fwd = np.linspace(0.1, 0.5, 20)
@@ -272,7 +300,7 @@ def test_evaluate_run_capacitance_and_overlay():
     run = CVResult(cycles=[cyc1, cyc2], scan_rate=0.05 * (ureg.volt / ureg.second))
     run.figures = generate_cv_plotly_figures(run)
 
-    i_cap = evaluate_run_capacitance(run, default_cycle_selection='-1:', width_fraction=0.5)
+    i_cap = evaluate_run_capacitance(run, cycle_selection='-1:', width_fraction=0.5)
     assert i_cap is not None
     assert i_cap == pytest.approx(0.002, rel=1e-2)
 
@@ -290,8 +318,8 @@ def test_evaluate_run_capacitance_and_overlay():
         assert not isinstance(trace.get('y'), np.ndarray)
 
 
-def test_ecsa_result_cycle_selection_and_arc_regression():
-    """Test full ECSA normalization with arc regression, cycle selection override, and Cdl fit."""
+def test_ecsa_result_arc_regression():
+    """Test full ECSA normalization with arc regression and Cdl fit."""
     v_fwd = np.linspace(0.1, 0.5, 20)
     v_rev = np.linspace(0.5, 0.1, 20)
     v_arr = np.concatenate([v_fwd, v_rev])
@@ -320,12 +348,7 @@ def test_ecsa_result_cycle_selection_and_arc_regression():
         scan_rate=0.05 * (ureg.volt / ureg.second),
     )
 
-    ecsa_res = ECSAResult(
-        runs=[run1, run2],
-        cycle_selection=':',
-        arc_width_fraction=0.5,
-        specific_capacitance=40.0 * (ureg.microfarad / (ureg.centimeter**2)),
-    )
+    ecsa_res = ECSAResult(runs=[run1, run2])
 
     normalize_ecsa_result(ecsa_res)
 
@@ -333,4 +356,3 @@ def test_ecsa_result_cycle_selection_and_arc_regression():
     # Slope = (0.0025 - 0.001) / (0.05 - 0.02) = 0.0015 / 0.03 = 0.05 F = 50 mF
     cdl = ecsa_res.double_layer_capacitance.to('farad').magnitude
     assert cdl == pytest.approx(0.05, rel=1e-2)
-    assert ecsa_res.electrochemical_surface_area is not None

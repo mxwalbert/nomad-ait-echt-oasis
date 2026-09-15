@@ -16,6 +16,7 @@ from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.result im
 from nomad_ait_echt_oasis.normalizers.utils import (
     build_scatter_trace,
     get_quantity_array,
+    get_quantity_scalar,
     parse_cycle_slice,
 )
 
@@ -42,7 +43,9 @@ def _get_y_data(target: Any, use_density: bool) -> np.ndarray | None:
 
 
 def generate_cv_plotly_figures(
-    result: 'CVResult', use_density: bool = False
+    result: 'CVResult',
+    use_density: bool = False,
+    cycle_selection: str | None = None,
 ) -> list[PlotlyFigure]:
     """Generate interactive Plotly figures for CV voltammogram and time series."""
     figures = []
@@ -53,7 +56,7 @@ def generate_cv_plotly_figures(
 
     # 1. Voltammogram (I-V or J-V)
     fig_cv = go.Figure()
-    cyc_slice = parse_cycle_slice(getattr(result, 'cycle_selection', None))
+    cyc_slice = parse_cycle_slice(cycle_selection)
     cycles_to_plot = result.cycles[cyc_slice] if result.cycles else []
 
     if cycles_to_plot:
@@ -171,7 +174,139 @@ def create_cv_cycle(  # noqa: PLR0913
     return cyc
 
 
-def auto_decompose_cycles(result: 'CVResult') -> None:
+def detect_cv_cycle_boundaries(  # noqa: PLR0912, PLR0915
+    v_arr: np.ndarray,
+    v_start: float | None = None,
+    v_end: float | None = None,
+) -> list[int]:
+    """
+    Detect cycle boundaries in continuous CV potential data.
+
+    Splits between v_start and v_end (e.g. from CVParameter initial_potential and
+    final_potential), auto-detecting these values from the first and last potential
+    values of the continuous data if not provided.
+
+    Ensures that each cycle traverses both switching extrema before returning to
+    the boundary potential, preventing full cycles (v_start -> v_max -> v_min -> v_end)
+    from being dissected into separate half-cycle arcs at intermediate crossings.
+    """
+    n_points = len(v_arr)
+    if n_points < MIN_POINTS_FOR_CYCLE_SPLIT:
+        return [0, n_points]
+
+    v_min = float(np.min(v_arr))
+    v_max = float(np.max(v_arr))
+    span = v_max - v_min
+    if span <= 1e-5:  # noqa: PLR2004
+        return [0, n_points]
+
+    if v_start is None:
+        v_start = float(v_arr[0])
+    if v_end is None:
+        v_end = float(v_arr[-1])
+
+    # Initial scan direction (+1: anodic / increasing, -1: cathodic / decreasing)
+    diffs = np.diff(v_arr)
+    nonzero_diffs = diffs[np.abs(diffs) > 1e-6]  # noqa: PLR2004
+    initial_dir = 1 if (len(nonzero_diffs) > 0 and nonzero_diffs[0] > 0) else -1
+
+    # Extrema recognition thresholds
+    t_upper = v_max - 0.15 * span
+    t_lower = v_min + 0.15 * span
+
+    v_split = v_start
+    is_split_near_min = (v_split - v_min) <= 0.15 * span
+    is_split_near_max = (v_max - v_split) <= 0.15 * span
+
+    cycle_breaks = [0]
+    visited_ext1 = False
+    visited_ext2 = False
+
+    i = 1
+    while i < n_points:
+        v_curr = v_arr[i]
+        v_prev = v_arr[i - 1]
+
+        if is_split_near_min:
+            # Cycle starting/ending near v_min: v_min -> v_max -> v_min
+            if v_curr >= t_upper:
+                visited_ext1 = True
+            elif (
+                visited_ext1
+                and v_curr <= t_lower
+                and (v_curr > v_prev or i == n_points - 1)
+            ):
+                best_i = i - 1 if v_prev <= v_curr else i
+                if best_i - cycle_breaks[-1] >= MIN_CYCLE_LENGTH:
+                    cycle_breaks.append(best_i)
+                    visited_ext1 = False
+                    i = best_i + MIN_CYCLE_LENGTH
+                    continue
+        elif is_split_near_max:
+            # Cycle starting/ending near v_max: v_max -> v_min -> v_max
+            if v_curr <= t_lower:
+                visited_ext1 = True
+            elif (
+                visited_ext1
+                and v_curr >= t_upper
+                and (v_curr < v_prev or i == n_points - 1)
+            ):
+                best_i = i - 1 if v_prev >= v_curr else i
+                if best_i - cycle_breaks[-1] >= MIN_CYCLE_LENGTH:
+                    cycle_breaks.append(best_i)
+                    visited_ext1 = False
+                    i = best_i + MIN_CYCLE_LENGTH
+                    continue
+        # General case: intermediate v_split, e.g. v_start -> v_max -> v_min -> v_end
+        elif initial_dir > 0:
+            if v_curr >= t_upper:
+                visited_ext1 = True
+            elif visited_ext1 and v_curr <= t_lower:
+                visited_ext2 = True
+            elif visited_ext1 and visited_ext2:
+                if (
+                    (v_prev - v_split) <= 0
+                    and (v_curr - v_split) >= 0
+                    and v_curr >= v_prev
+                ):
+                    best_i = (
+                        i - 1 if abs(v_prev - v_split) < abs(v_curr - v_split) else i
+                    )
+                    if best_i - cycle_breaks[-1] >= MIN_CYCLE_LENGTH:
+                        cycle_breaks.append(best_i)
+                        visited_ext1 = False
+                        visited_ext2 = False
+                        i = best_i + MIN_CYCLE_LENGTH
+                        continue
+        elif v_curr <= t_lower:
+            visited_ext1 = True
+        elif visited_ext1 and v_curr >= t_upper:
+            visited_ext2 = True
+        elif visited_ext1 and visited_ext2:
+            if (v_prev - v_split) >= 0 and (v_curr - v_split) <= 0 and v_curr <= v_prev:
+                best_i = i - 1 if abs(v_prev - v_split) < abs(v_curr - v_split) else i
+                if best_i - cycle_breaks[-1] >= MIN_CYCLE_LENGTH:
+                    cycle_breaks.append(best_i)
+                    visited_ext1 = False
+                    visited_ext2 = False
+                    i = best_i + MIN_CYCLE_LENGTH
+                    continue
+
+        i += 1
+
+    if cycle_breaks[-1] != n_points:
+        if n_points - cycle_breaks[-1] < MIN_CYCLE_LENGTH and len(cycle_breaks) > 1:
+            cycle_breaks[-1] = n_points
+        else:
+            cycle_breaks.append(n_points)
+
+    return cycle_breaks
+
+
+def auto_decompose_cycles(
+    result: 'CVResult',
+    parameters: Any = None,
+) -> None:
     """
     Auto-decompose contiguous data into CVCycle segments
     if cycles are not provided.
@@ -203,18 +338,20 @@ def auto_decompose_cycles(result: 'CVResult') -> None:
             )
             result.cycles.append(cyc)
 
-    # Case 2: Detect cycle vertices from turning points
+    # Case 2: Detect cycle boundaries between v_start and v_end
     elif len(v_arr) > MIN_POINTS_FOR_CYCLE_SPLIT:
-        diffs = np.diff(v_arr)
-        signs = np.sign(diffs)
-        signs = np.where(signs == 0, 1, signs)
-        turning_points = np.where(np.diff(signs) != 0)[0] + 1
+        v_start = None
+        v_end = None
+        eff_params = parameters or getattr(result, 'parameters', None)
+        if eff_params is not None:
+            v_start = get_quantity_scalar(
+                getattr(eff_params, 'initial_potential', None), 'volt'
+            )
+            v_end = get_quantity_scalar(
+                getattr(eff_params, 'final_potential', None), 'volt'
+            )
 
-        cycle_breaks = [0]
-        for i in range(1, len(turning_points), 2):
-            cycle_breaks.append(turning_points[i])
-        if cycle_breaks[-1] != len(v_arr):
-            cycle_breaks.append(len(v_arr))
+        cycle_breaks = detect_cv_cycle_boundaries(v_arr, v_start=v_start, v_end=v_end)
 
         cycle_index_arr = np.zeros(len(v_arr), dtype=int)
         for c_idx in range(len(cycle_breaks) - 1):
@@ -346,12 +483,14 @@ def calculate_cv_scan_rate(  # noqa: PLR2004
     return total_voltage / total_time
 
 
-def normalize_cv_result(
+def normalize_cv_result(  # noqa: PLR0913
     result: 'CVResult',
     cell: Any = None,
     surface_area_val: float | None = None,
     ref_potential_rhe: float | None = None,
     ph_val: float | None = None,
+    parameters: Any = None,
+    cycle_selection: str | None = None,
 ) -> None:
     """
     Normalize a single CVResult: continuous current density, RHE conversion,
@@ -372,7 +511,7 @@ def normalize_cv_result(
     )
 
     # 2. Auto-decompose continuous data into CVCycle segments if not provided
-    auto_decompose_cycles(result)
+    auto_decompose_cycles(result, parameters=parameters)
 
     # 3. Normalize individual cycles in CVCycle
     if result.cycles:
@@ -394,17 +533,23 @@ def normalize_cv_result(
         result.scan_rate = calc_sr * (ureg.volt / ureg.second)
 
     # 6. Generate Plotly figures for CVResult
-    result.figures = generate_cv_plotly_figures(result, use_density=has_area)
+    result.figures = generate_cv_plotly_figures(
+        result, use_density=has_area, cycle_selection=cycle_selection
+    )
 
 
 def normalize_cyclic_voltammetry(
     cv: 'CyclicVoltammetry',
     archive: 'EntryArchive' = None,
     logger: 'BoundLogger' = None,
+    cycle_selection: str | None = None,
 ) -> None:
     """Extract cell parameters and normalize all CV results."""
     if getattr(cv, 'cell', None) is not None:
         normalize_three_electrode_cell(cv.cell, archive, logger)
 
+    params = getattr(cv, 'parameters', None)
     for result in getattr(cv, 'results', None) or []:
-        normalize_cv_result(result, cell=cv.cell)
+        normalize_cv_result(
+            result, cell=cv.cell, parameters=params, cycle_selection=cycle_selection
+        )

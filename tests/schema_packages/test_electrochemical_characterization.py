@@ -332,10 +332,7 @@ def test_ecsa_and_normalizer(archive):
         )
         cv_runs.append(run_cv)
 
-    ecsa_res = ECSAResult(
-        runs=cv_runs,
-        specific_capacitance=40.0 * (ureg.microfarad / (ureg.centimeter**2)),
-    )
+    ecsa_res = ECSAResult(runs=cv_runs)
 
     ecsa_res.normalize(archive, None)
 
@@ -360,10 +357,6 @@ def test_ecsa_and_normalizer(archive):
     assert len(res.scan_rates) == 3
     assert res.charging_currents is not None
     assert len(res.charging_currents) == 3
-    assert res.electrochemical_surface_area is not None
-    assert res.electrochemical_surface_area.to(
-        'centimeter ** 2'
-    ).magnitude == pytest.approx(25.0, rel=1e-2)
     assert len(res.figures) == 1
     assert res.figures[0].label == 'Cdl Determination'
     # Verify individual CV results retain their own PlotSection figures

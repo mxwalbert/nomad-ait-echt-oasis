@@ -170,22 +170,6 @@ def test_is_mainfile_variations(tmp_path):
         inst.create_group('xy_pec')
     assert parser.is_mainfile(str(with_inst), 'application/x-hdf', b'', '')
 
-    # CAMELS_entry with measurement_details/plan_name
-    with_pn = tmp_path / 'with_pn.h5'
-    with h5py.File(with_pn, 'w') as f:
-        entry = f.create_group('CAMELS_entry')
-        md = entry.create_group('measurement_details')
-        md.create_dataset('plan_name', data=np.array(b'ScreeningLoop_Test'))
-    assert parser.is_mainfile(str(with_pn), 'application/x-hdf', b'', '')
-
-    # CAMELS_entry with measurement_details/protocol_overview
-    with_po = tmp_path / 'with_po.h5'
-    with h5py.File(with_po, 'w') as f:
-        entry = f.create_group('CAMELS_entry')
-        md = entry.create_group('measurement_details')
-        md.create_dataset('protocol_overview', data=np.array(b'xy_pec screening'))
-    assert parser.is_mainfile(str(with_po), 'application/x-hdf', b'', '')
-
 
 def test_parser_missing_entries(tmp_path):
     """Test parser behavior when CAMELS_entry or primary data group is missing."""
@@ -222,6 +206,8 @@ def test_parser_metadata_fallbacks_and_elapsed_time(tmp_path):
     h5_file = tmp_path / 'metadata_test.h5'
     with h5py.File(h5_file, 'w') as f:
         entry = f.create_group('CAMELS_entry')
+        inst = entry.create_group('instruments')
+        inst.create_group('xy_pec')
 
         # Measurement details: invalid start_time + valid description
         md = entry.create_group('measurement_details')
@@ -271,7 +257,9 @@ def test_parser_metadata_fallbacks_and_elapsed_time(tmp_path):
         r0.create_dataset('ElapsedTime', data=np.linspace(0, 5, 20))
 
     archive = EntryArchive(metadata=EntryMetadata(entry_name='metadata_test'))
-    parser.parse(str(h5_file), archive, logger)
+    mainfile_keys = parser.is_mainfile(str(h5_file), 'application/x-hdf', b'', '')
+    child_archives = {k: EntryArchive() for k in mainfile_keys} if isinstance(mainfile_keys, list) else {}
+    parser.parse(str(h5_file), archive, logger, child_archives=child_archives)
 
     data = archive.data
     assert data.description == 'Test Run Description'
@@ -327,6 +315,8 @@ def test_parser_subprotocol_skip_cases(tmp_path):
     h5_file = tmp_path / 'skip_cases.h5'
     with h5py.File(h5_file, 'w') as f:
         entry = f.create_group('CAMELS_entry')
+        inst = entry.create_group('instruments')
+        inst.create_group('xy_pec')
         data_grp = entry.create_group('data')
         data_grp.create_group('ScreeningLoop_variable_signal')
         primary = data_grp.create_group('primary')
@@ -351,7 +341,9 @@ def test_parser_subprotocol_skip_cases(tmp_path):
         ecsa2.create_group('Run_0')  # Empty run missing potential/current
 
     archive = EntryArchive(metadata=EntryMetadata(entry_name='skip_cases'))
-    parser.parse(str(h5_file), archive, logger)
+    mainfile_keys = parser.is_mainfile(str(h5_file), 'application/x-hdf', b'', '')
+    child_archives = {k: EntryArchive() for k in mainfile_keys} if isinstance(mainfile_keys, list) else {}
+    parser.parse(str(h5_file), archive, logger, child_archives=child_archives)
 
     assert len(archive.data.steps) == 1
     ecsa_map = archive.data.steps[0]
@@ -369,6 +361,8 @@ def test_parser_with_predefined_cell_parameters(tmp_path):
     h5_file = tmp_path / 'predefined_cell.h5'
     with h5py.File(h5_file, 'w') as f:
         entry = f.create_group('CAMELS_entry')
+        inst = entry.create_group('instruments')
+        inst.create_group('xy_pec')
         data_grp = entry.create_group('data')
         data_grp.create_group('ScreeningLoop_variable_signal')
 
@@ -386,7 +380,9 @@ def test_parser_with_predefined_cell_parameters(tmp_path):
         cv_grp.create_dataset('time', data=np.linspace(0, 5, 15))
 
     archive = EntryArchive(metadata=EntryMetadata(entry_name='predefined_cell'))
-    parser.parse(str(h5_file), archive, logger)
+    mainfile_keys = parser.is_mainfile(str(h5_file), 'application/x-hdf', b'', '')
+    child_archives = {k: EntryArchive() for k in mainfile_keys} if isinstance(mainfile_keys, list) else {}
+    parser.parse(str(h5_file), archive, logger, child_archives=child_archives)
 
     assert len(archive.data.steps) == 1
     cv_map = archive.data.steps[0]
@@ -422,6 +418,8 @@ def test_parser_sample_reference_edge_cases(tmp_path):
         h5_file = tmp_path / f'{case_name}.h5'
         with h5py.File(h5_file, 'w') as f:
             entry = f.create_group('CAMELS_entry')
+            inst = entry.create_group('instruments')
+            inst.create_group('xy_pec')
             if sample_data is not None:
                 s_grp = entry.create_group('sample')
                 for k, v in sample_data.items():
@@ -439,7 +437,9 @@ def test_parser_sample_reference_edge_cases(tmp_path):
             cv_grp.create_dataset('time', data=np.array([0.0, 1.0]))
 
         archive = EntryArchive(metadata=EntryMetadata(entry_name=case_name))
-        parser.parse(str(h5_file), archive, logger)
+        mainfile_keys = parser.is_mainfile(str(h5_file), 'application/x-hdf', b'', '')
+        child_archives = {k: EntryArchive() for k in mainfile_keys} if isinstance(mainfile_keys, list) else {}
+        parser.parse(str(h5_file), archive, logger, child_archives=child_archives)
 
         data = archive.data
         assert len(data.steps) == 1
@@ -468,6 +468,8 @@ def test_parse_cv_and_ecsa_parameters(tmp_path):
     h5_file = tmp_path / 'params_test.h5'
     with h5py.File(h5_file, 'w') as f:
         entry = f.create_group('CAMELS_entry')
+        inst = entry.create_group('instruments')
+        inst.create_group('xy_pec')
         data_grp = entry.create_group('data')
         data_grp.create_group('ScreeningLoop_variable_signal')
         primary = data_grp.create_group('primary')
@@ -513,7 +515,9 @@ def test_parse_cv_and_ecsa_parameters(tmp_path):
             r_sig.create_dataset('scan_rate_mvpers', data=np.array([sr_val]))
 
     archive = EntryArchive(metadata=EntryMetadata(entry_name='params_test'))
-    parser.parse(str(h5_file), archive, logger)
+    mainfile_keys = parser.is_mainfile(str(h5_file), 'application/x-hdf', b'', '')
+    child_archives = {k: EntryArchive() for k in mainfile_keys} if isinstance(mainfile_keys, list) else {}
+    parser.parse(str(h5_file), archive, logger, child_archives=child_archives)
 
     data = archive.data
     assert len(data.steps) == 2
