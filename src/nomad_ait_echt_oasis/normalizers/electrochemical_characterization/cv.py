@@ -16,6 +16,7 @@ from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.result im
 from nomad_ait_echt_oasis.normalizers.utils import (
     build_scatter_trace,
     get_quantity_array,
+    parse_cycle_slice,
 )
 
 if TYPE_CHECKING:
@@ -52,8 +53,11 @@ def generate_cv_plotly_figures(
 
     # 1. Voltammogram (I-V or J-V)
     fig_cv = go.Figure()
-    if result.cycles:
-        for cyc in result.cycles:
+    cyc_slice = parse_cycle_slice(getattr(result, 'cycle_selection', None))
+    cycles_to_plot = result.cycles[cyc_slice] if result.cycles else []
+
+    if cycles_to_plot:
+        for cyc in cycles_to_plot:
             v = get_quantity_array(cyc.potential, 'volt')
             y = _get_y_data(cyc, use_density)
             if v is not None and y is not None:
@@ -97,8 +101,8 @@ def generate_cv_plotly_figures(
                 build_scatter_trace(x=t, y=v, name='Potential (V)', yaxis='y1')
             )
             fig_time.add_trace(build_scatter_trace(x=t, y=y, name=y_label, yaxis='y2'))
-    elif result.cycles:
-        for cyc in result.cycles:
+    elif cycles_to_plot:
+        for cyc in cycles_to_plot:
             t = get_quantity_array(cyc.time, 'second')
             v = get_quantity_array(cyc.potential, 'volt')
             y = _get_y_data(cyc, use_density)
@@ -106,7 +110,7 @@ def generate_cv_plotly_figures(
                 has_time = True
                 suffix = (
                     f' (Cycle {cyc.cycle_index})'
-                    if len(result.cycles) > 1 and cyc.cycle_index is not None
+                    if len(cycles_to_plot) > 1 and cyc.cycle_index is not None
                     else ''
                 )
                 fig_time.add_trace(

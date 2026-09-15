@@ -69,3 +69,23 @@ def build_scatter_trace(  # noqa: PLR0913
     if marker is not None:
         trace_kwargs['marker'] = marker
     return go.Scatter(**trace_kwargs)
+
+
+MIN_SLICE_LENGTH = 3
+
+
+def parse_cycle_slice(slice_str: str | None) -> slice:
+    """
+    Parse a Python slice syntax string (e.g., '2:6') into a slice object.
+    Returns slice(None) if slice_str is None, empty, or invalid.
+    """
+    if not slice_str or not isinstance(slice_str, str):
+        return slice(None)
+    parts = slice_str.strip().split(':')
+    if len(parts) > MIN_SLICE_LENGTH:
+        return slice(None)
+    try:
+        parsed = [int(p.strip()) if p.strip() else None for p in parts]
+        return slice(*parsed)
+    except ValueError:
+        return slice(None)

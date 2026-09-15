@@ -99,6 +99,20 @@ CD_UNIT = 'milliampere / centimeter ** 2'
 C_UNIT = 'milliampere'
 
 
+class ReferencedActivity(Activity):
+    """
+    Activity that is referenced from another activity.
+    Extends the Activity section with a reference to the parent.
+    """
+
+    m_def = Section(extends_base_section=True)
+
+    x_parent_activity = Quantity(
+        type=Activity,
+        description='Reference to the parent activity.',
+    )
+
+
 # --- Categories ---
 class ElectrochemicalMeasurementCategory(EntryDataCategory):
     """
@@ -914,6 +928,18 @@ class CVResult(ElectrochemicalMeasurementResult, PlotSection):
         description='Scan rate of the cyclic voltammetric sweep.',
     )
 
+    cycle_selection = Quantity(
+        type=str,
+        description="""
+        Python slice syntax (e.g., '2:6', '1:', ':-1') specifying which cycles
+        to select.
+        """,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.StringEditQuantity,
+            label='Cycle Selection',
+        ),
+    )
+
 
 class Voltammetry(ElectrochemicalMeasurement, EntryData):
     """
@@ -1043,6 +1069,32 @@ class ECSAResult(ElectrochemicalMeasurementResult, PlotSection):
         """,
     )
 
+    cycle_selection = Quantity(
+        type=str,
+        description="""
+        Default Python slice syntax (e.g., '2:6', '1:', ':-1') specifying which cycles
+        to evaluate for double-layer capacitance across all runs, unless overridden 
+        on individual runs.
+        """,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.StringEditQuantity,
+            label='Default Cycle Selection',
+        ),
+    )
+
+    arc_width_fraction = Quantity(
+        type=float,
+        default=0.5,
+        description="""
+        Fraction of the potential arc width centered at midpoint (0.0 < width <= 1.0)
+        considered for the anodic and cathodic arc linear regressions.
+        """,
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            label='Considered Arc Width Fraction',
+        ),
+    )
+
     scan_rates = Quantity(
         type=np.float64,
         shape=['*'],
@@ -1134,20 +1186,6 @@ class ECSAMeasurement(ElectrochemicalMeasurement, EntryData):
         """Normalizer for ECSA measurement entry delegating to decoupled normalizer."""
         super().normalize(archive, logger)
         normalize_ecsa_measurement(self, archive, logger)
-
-
-class ReferencedActivity(Activity):
-    """
-    Activity that is referenced from another activity.
-    Extends the Activity section with a reference to the parent.
-    """
-
-    m_def = Section(extends_base_section=True)
-
-    x_parent_activity = Quantity(
-        type=Activity,
-        description='Reference to the parent activity.',
-    )
 
 
 class MappingStep(ActivityStep):

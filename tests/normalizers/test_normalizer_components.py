@@ -7,11 +7,15 @@ from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cell impo
     normalize_three_electrode_cell,
 )
 from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cv import (
-    generate_cv_plotly_figures,
     auto_decompose_cycles,
+    generate_cv_plotly_figures,
 )
 from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.ecsa import (
+    evaluate_run_capacitance,
+    extract_anodic_cathodic_arcs,
     extract_capacitive_current,
+    filter_arc_window,
+    normalize_ecsa_result,
 )
 from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.result import (
     normalize_measurement_signals,
@@ -20,10 +24,12 @@ from nomad_ait_echt_oasis.normalizers.utils import (
     build_scatter_trace,
     get_quantity_array,
     get_quantity_scalar,
+    parse_cycle_slice,
 )
 from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
     CVCycle,
     CVResult,
+    ECSAResult,
     Electrolyte,
     ReferenceElectrode,
     ThreeElectrodeCell,
@@ -181,3 +187,143 @@ def test_extract_capacitive_current():
     i_cap = extract_capacitive_current(v_arr, i_arr)
     assert i_cap is not None
     assert i_cap == pytest.approx(0.001, rel=1e-3)
+
+
+def test_parse_cycle_slice():
+    """Test Python slice string parsing helper."""
+    assert parse_cycle_slice(None) == slice(None)
+    assert parse_cycle_slice('') == slice(None)
+    assert parse_cycle_slice('invalid') == slice(None)
+    assert parse_cycle_slice('2:6') == slice(2, 6)
+    assert parse_cycle_slice('1:') == slice(1, None)
+    assert parse_cycle_slice(':-1') == slice(None, -1)
+    assert parse_cycle_slice('0:10:2') == slice(0, 10, 2)
+
+
+def test_extract_anodic_cathodic_arcs():
+    """Test separating CV cycle into anodic and cathodic arcs."""
+    # Symmetrical triangular cycle: 0.0 -> 1.0 -> 0.0
+    v_arr = np.array([0.0, 0.5, 1.0, 0.5, 0.0])
+    i_arr = np.array([0.001, 0.001, 0.0, -0.001, -0.001])
+
+    v_anod, i_anod, v_cath, i_cath = extract_anodic_cathodic_arcs(v_arr, i_arr)
+    assert len(v_anod) > 0
+    assert len(v_cath) > 0
+    # Anodic arc should have potential increasing from min to max
+    assert v_anod[0] == 0.0
+    assert v_anod[-1] == 1.0
+    # Cathodic arc should have potential decreasing from max to min
+    assert v_cath[0] == 1.0
+    assert v_cath[-1] == 0.0
+
+
+def test_filter_arc_window():
+    """Test filtering arc data to centered potential window."""
+    v_arc = np.linspace(0.0, 1.0, 11)  # 0.0, 0.1, ..., 1.0
+    i_arc = np.full(11, 0.001)
+
+    v_mid = 0.5
+    v_span = 1.0
+
+    # 50% width -> [0.25, 0.75]
+    v_filt, i_filt = filter_arc_window(v_arc, i_arc, v_mid, v_span, width_fraction=0.5)
+    assert np.all(v_filt >= 0.25)
+    assert np.all(v_filt <= 0.75)
+    assert len(v_filt) == 5  # 0.3, 0.4, 0.5, 0.6, 0.7
+
+
+def test_cv_cycle_selection_figure_filtering():
+    """Test that CVResult.cycle_selection filters which cycles are rendered in figures."""
+    potential = np.array([0.0, 0.5, 1.0, 0.5, 0.0]) * ureg.volt
+    current = np.array([0.001, 0.001, 0.0, -0.001, -0.001]) * ureg.ampere
+
+    cyc1 = CVCycle(cycle_index=1, potential=potential, current=current)
+    cyc2 = CVCycle(cycle_index=2, potential=potential, current=current)
+    cyc3 = CVCycle(cycle_index=3, potential=potential, current=current)
+
+    res = CVResult(
+        cycles=[cyc1, cyc2, cyc3],
+        cycle_selection='1:2',  # Selects only cycle index 2 (index 1 in 0-based indexing)
+    )
+    figs = generate_cv_plotly_figures(res)
+    assert len(figs) > 0
+
+    volt_fig = next(f for f in figs if f.label == 'Cyclic Voltammogram')
+    traces = volt_fig.figure.get('data', [])
+    assert len(traces) == 1
+    assert traces[0]['name'] == 'Cycle 2'
+
+
+def test_evaluate_run_capacitance_and_overlay():
+    """Test arc regression capacitance evaluation and Plotly figure overlay."""
+    v_fwd = np.linspace(0.1, 0.5, 20)
+    v_rev = np.linspace(0.5, 0.1, 20)
+    v_arr = np.concatenate([v_fwd, v_rev])
+
+    # Anodic: 2 mA (+ 0.1*v slope), Cathodic: -2 mA (+ 0.1*v slope)
+    # At v_mid = 0.3V, delta_i = 4 mA, i_cap = 2 mA = 0.002 A
+    i_fwd = 0.002 + 0.001 * v_fwd
+    i_rev = -0.002 + 0.001 * v_rev
+    i_arr = np.concatenate([i_fwd, i_rev])
+
+    cyc1 = CVCycle(cycle_index=1, potential=v_arr * ureg.volt, current=i_arr * ureg.ampere)
+    cyc2 = CVCycle(cycle_index=2, potential=v_arr * ureg.volt, current=i_arr * ureg.ampere)
+
+    run = CVResult(cycles=[cyc1, cyc2], scan_rate=0.05 * (ureg.volt / ureg.second))
+    run.figures = generate_cv_plotly_figures(run)
+
+    i_cap = evaluate_run_capacitance(run, default_cycle_selection='-1:', width_fraction=0.5)
+    assert i_cap is not None
+    assert i_cap == pytest.approx(0.002, rel=1e-2)
+
+    # Verify that Anodic Fit and Cathodic Fit lines were added to run.figures
+    volt_fig = next(f for f in run.figures if f.label == 'Cyclic Voltammogram')
+    trace_names = [t.get('name') for t in volt_fig.figure.get('data', [])]
+    assert 'Anodic Fit' in trace_names
+    assert 'Cathodic Fit' in trace_names
+
+
+def test_ecsa_result_cycle_selection_and_arc_regression():
+    """Test full ECSA normalization with arc regression, cycle selection override, and Cdl fit."""
+    v_fwd = np.linspace(0.1, 0.5, 20)
+    v_rev = np.linspace(0.5, 0.1, 20)
+    v_arr = np.concatenate([v_fwd, v_rev])
+
+    # Run 1: scan_rate = 0.02 V/s, delta_i = 2 mA -> i_cap = 1 mA = 0.001 A
+    run1 = CVResult(
+        cycles=[
+            CVCycle(
+                cycle_index=1,
+                potential=v_arr * ureg.volt,
+                current=np.concatenate([np.full(20, 0.001), np.full(20, -0.001)]) * ureg.ampere,
+            )
+        ],
+        scan_rate=0.02 * (ureg.volt / ureg.second),
+    )
+
+    # Run 2: scan_rate = 0.05 V/s, delta_i = 5 mA -> i_cap = 2.5 mA = 0.0025 A
+    run2 = CVResult(
+        cycles=[
+            CVCycle(
+                cycle_index=1,
+                potential=v_arr * ureg.volt,
+                current=np.concatenate([np.full(20, 0.0025), np.full(20, -0.0025)]) * ureg.ampere,
+            )
+        ],
+        scan_rate=0.05 * (ureg.volt / ureg.second),
+    )
+
+    ecsa_res = ECSAResult(
+        runs=[run1, run2],
+        cycle_selection=':',
+        arc_width_fraction=0.5,
+        specific_capacitance=40.0 * (ureg.microfarad / (ureg.centimeter**2)),
+    )
+
+    normalize_ecsa_result(ecsa_res)
+
+    assert ecsa_res.double_layer_capacitance is not None
+    # Slope = (0.0025 - 0.001) / (0.05 - 0.02) = 0.0015 / 0.03 = 0.05 F = 50 mF
+    cdl = ecsa_res.double_layer_capacitance.to('farad').magnitude
+    assert cdl == pytest.approx(0.05, rel=1e-2)
+    assert ecsa_res.electrochemical_surface_area is not None
