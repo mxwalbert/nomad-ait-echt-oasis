@@ -24,6 +24,7 @@ from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization impor
     ElectrochemicalMapping,
     ElectrochemicalMappingStep,
     ElectrochemicalMeasurement,
+    ElectrochemicalMeasurementReference,
     Electrolyte,
     ReferenceElectrode,
     ThreeElectrodeCell,
@@ -373,8 +374,6 @@ class XYPECParser(MatchingParser):
             samples=data.samples,
         )
 
-        cv_entry.x_parent_activity = data
-
         cv_entry.parameters = cv_param
 
         cv_entry.normalize(self.archive, self.logger)
@@ -458,8 +457,6 @@ class XYPECParser(MatchingParser):
             samples=data.samples,
         )
 
-        ecsa_entry.x_parent_activity = data
-
         ecsa_entry.parameters = ecsa_params
 
         ecsa_entry.normalize(self.archive, self.logger)
@@ -478,7 +475,7 @@ class XYPECParser(MatchingParser):
         an electrochemical mapping step.
         """
         mapping = ElectrochemicalMappingStep()
-        mapping.activity = entry
+        mapping.measurement_ref = ElectrochemicalMeasurementReference(reference=entry)
         mapping.name = f'{technique} at stage x = {pos_x:.1f} mm, y = {pos_y:.1f} mm'
         mapping.x_absolute = pos_x * ureg.millimeter
         mapping.y_absolute = pos_y * ureg.millimeter

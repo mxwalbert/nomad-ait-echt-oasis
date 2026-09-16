@@ -12,19 +12,15 @@ from nomad.datamodel.metainfo.annotations import (
     ELNComponentEnum,
 )
 from nomad.datamodel.metainfo.basesections import (
-    Activity,
     ActivityStep,
     CompositeSystem,
     CompositeSystemReference,
     Measurement,
     MeasurementResult,
+    SectionReference,
 )
 from nomad.datamodel.metainfo.plot import (
     PlotSection,
-)
-from nomad.datamodel.metainfo.workflow import (
-    Task,
-    TaskReference,
 )
 from nomad.metainfo import (
     MEnum,
@@ -97,6 +93,82 @@ MIN_CYCLE_LENGTH = 4
 # --- Constants for abbreviating long unit strings ---
 CD_UNIT = 'milliampere / centimeter ** 2'
 C_UNIT = 'milliampere'
+
+
+# --- General sections ---
+class MeasurementReference(SectionReference):
+    """
+    A section used for referencing a Measurement.
+    """
+
+    reference = Quantity(
+        type=Measurement,
+        description='A reference to a Measurement entry.',
+        a_eln=ELNAnnotation(
+            component='ReferenceEditQuantity',
+            label='Measurement reference',
+        ),
+    )
+
+
+class MappingStep(ActivityStep):
+    """
+    A single measurement step at a defined stage/sample coordinate within a mapping run.
+    """
+
+    m_def = Section(
+        description="""
+        A single measurement step at a defined stage/sample coordinate 
+        within a mapping run.
+        """,
+    )
+
+    x_absolute = Quantity(
+        type=np.float64,
+        unit='m',
+        description='Absolute x position of the measurement stage.',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            defaultDisplayUnit='mm',
+        ),
+    )
+
+    y_absolute = Quantity(
+        type=np.float64,
+        unit='m',
+        description='Absolute y position of the measurement stage.',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            defaultDisplayUnit='mm',
+        ),
+    )
+
+    x_relative = Quantity(
+        type=np.float64,
+        unit='m',
+        description='Relative x position on the sample.',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            defaultDisplayUnit='mm',
+        ),
+    )
+
+    y_relative = Quantity(
+        type=np.float64,
+        unit='m',
+        description='Relative y position on the sample.',
+        a_eln=ELNAnnotation(
+            component=ELNComponentEnum.NumberEditQuantity,
+            defaultDisplayUnit='mm',
+        ),
+    )
+
+    measurement_ref = SubSection(
+        section_def=MeasurementReference,
+        description="""
+        Reference to the stand-alone measurement entry.
+        """,
+    )
 
 
 # --- Categories ---
@@ -650,11 +722,6 @@ class ElectrochemicalMeasurement(Measurement):
         """,
     )
 
-    x_parent_activity = Quantity(
-        type=Activity,
-        description='Reference to the parent activity.',
-    )
-
     def normalize(self, archive: 'EntryArchive', logger: 'BoundLogger') -> None:
         """
         Normalizer for base ElectrochemicalMeasurement.
@@ -730,6 +797,21 @@ class ElectrochemicalMeasurementResult(MeasurementResult):
         description="""
         Electric current series normalized by the (geometric) active surface area.
         """,
+    )
+
+
+class ElectrochemicalMeasurementReference(MeasurementReference):
+    """
+    A section used for referencing an ElectrochemicalMeasurement.
+    """
+
+    reference = Quantity(
+        type=ElectrochemicalMeasurement,
+        description='A reference to an ElectrochemicalMeasurement entry.',
+        a_eln=ELNAnnotation(
+            component='ReferenceEditQuantity',
+            label='ElectrochemicalMeasurement reference',
+        ),
     )
 
 
@@ -857,6 +939,9 @@ class CVResult(ElectrochemicalMeasurementResult, PlotSection):
         description="""
         Result section for cyclic voltammetry measurements.
         """,
+        a_eln={
+            'overview': True,
+        },
     )
 
     cycles = SubSection(
@@ -1000,6 +1085,9 @@ class ECSAResult(ElectrochemicalMeasurementResult, PlotSection):
         description="""
         Result section for ECSA multi-scan rate sweeps and capacitance.
         """,
+        a_eln={
+            'overview': True,
+        },
     )
 
     runs = SubSection(
@@ -1081,72 +1169,6 @@ class ECSAMeasurement(ElectrochemicalMeasurement, EntryData):
         normalize_ecsa_measurement(self, archive, logger)
 
 
-class MappingStep(ActivityStep):
-    """
-    A single measurement step at a defined stage/sample coordinate within a mapping run.
-    """
-
-    m_def = Section(
-        description="""
-        A single measurement step at a defined stage/sample coordinate 
-        within a mapping run.
-        """,
-    )
-
-    x_absolute = Quantity(
-        type=np.float64,
-        unit='m',
-        description='Absolute x position of the measurement stage.',
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            defaultDisplayUnit='mm',
-        ),
-    )
-    y_absolute = Quantity(
-        type=np.float64,
-        unit='m',
-        description='Absolute y position of the measurement stage.',
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            defaultDisplayUnit='mm',
-        ),
-    )
-    x_relative = Quantity(
-        type=np.float64,
-        unit='m',
-        description='Relative x position on the sample.',
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            defaultDisplayUnit='mm',
-        ),
-    )
-    y_relative = Quantity(
-        type=np.float64,
-        unit='m',
-        description='Relative y position on the sample.',
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            defaultDisplayUnit='mm',
-        ),
-    )
-    activity = Quantity(
-        type=Measurement,
-        description='Reference to the stand-alone measurement entry.',
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.ReferenceEditQuantity,
-            label='Measurement Reference',
-        ),
-    )
-
-    def to_task(self) -> Task:
-        """Link step to the child measurement's workflow for the overview page."""
-        if self.activity and getattr(self.activity, 'm_parent', None):
-            wf2 = getattr(self.activity.m_parent, 'workflow2', None)
-            if wf2 is not None:
-                return TaskReference(name=self.name, task=wf2)
-        return Task(name=self.name, section=self)
-
-
 class ElectrochemicalMappingStep(MappingStep):
     """
     A single electrochemical measurement step
@@ -1160,13 +1182,11 @@ class ElectrochemicalMappingStep(MappingStep):
         """,
     )
 
-    activity = Quantity(
-        type=ElectrochemicalMeasurement,
-        description='Reference to the stand-alone electrochemical measurement entry.',
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.ReferenceEditQuantity,
-            label='Measurement reference',
-        ),
+    measurement_ref = SubSection(
+        section_def=ElectrochemicalMeasurementReference,
+        description="""
+        Reference to the stand-alone electrochemical measurement entry.
+        """,
     )
 
 

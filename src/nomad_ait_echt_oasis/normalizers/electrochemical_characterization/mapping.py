@@ -75,9 +75,9 @@ def normalize_electrochemical_mapping(  # noqa PLR0912, PLR0915
         # Set step name if empty
         if not getattr(step, 'name', None):
             technique = 'Measurement'
-            activity = getattr(step, 'activity', None)
-            if activity is not None:
-                technique = type(activity).__name__
+            measurement = getattr(step.measurement_ref, 'reference', None)
+            if measurement is not None:
+                technique = type(measurement).__name__
 
             if isinstance(
                 getattr(step, 'x_relative', None), ureg.Quantity
