@@ -473,17 +473,20 @@ class XYPECParser(MatchingParser):
         Parse an electrochemical measurement into
         an electrochemical mapping step.
         """
-        mapping = ElectrochemicalMappingStep()
-        mapping.measurement = entry
+        step = ElectrochemicalMappingStep()
+        step.measurement = entry
+        step.name = f'{technique} at stage x = {pos_x:.1f} mm, y = {pos_y:.1f} mm'
+        step.x_absolute = pos_x * ureg.millimeter
+        step.y_absolute = pos_y * ureg.millimeter
+
+        # Back-reference measurement entry to parent mapping measurement
         upload_id = self.archive.metadata.upload_id
-        entry_id = self.archive.metadata.entry_id
-        if upload_id and entry_id:
-            ref_string = f'../uploads/{upload_id}/archive/{entry_id}#data'
-            mapping.x_parent_ref = ref_string
-        mapping.name = f'{technique} at stage x = {pos_x:.1f} mm, y = {pos_y:.1f} mm'
-        mapping.x_absolute = pos_x * ureg.millimeter
-        mapping.y_absolute = pos_y * ureg.millimeter
-        return mapping
+        parent_id = self.archive.metadata.entry_id
+        if upload_id and parent_id:
+            ref_string = f'../uploads/{upload_id}/archive/{parent_id}#data'
+            entry.x_parent_ref = ref_string
+
+        return step
 
     def parse(  # noqa: PLR0912, PLR0915
         self,
