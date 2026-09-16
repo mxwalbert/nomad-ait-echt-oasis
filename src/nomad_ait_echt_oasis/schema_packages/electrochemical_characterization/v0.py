@@ -17,7 +17,6 @@ from nomad.datamodel.metainfo.basesections import (
     CompositeSystemReference,
     Measurement,
     MeasurementResult,
-    SectionReference,
 )
 from nomad.datamodel.metainfo.plot import (
     PlotSection,
@@ -96,21 +95,6 @@ C_UNIT = 'milliampere'
 
 
 # --- General sections ---
-class MeasurementReference(SectionReference):
-    """
-    A section used for referencing a Measurement.
-    """
-
-    reference = Quantity(
-        type=Measurement,
-        description='A reference to a Measurement entry.',
-        a_eln=ELNAnnotation(
-            component='ReferenceEditQuantity',
-            label='Measurement reference',
-        ),
-    )
-
-
 class MappingStep(ActivityStep):
     """
     A single measurement step at a defined stage/sample coordinate within a mapping run.
@@ -163,10 +147,17 @@ class MappingStep(ActivityStep):
         ),
     )
 
-    measurement_ref = SubSection(
-        section_def=MeasurementReference,
+    measurement = SubSection(
+        section_def=Measurement,
         description="""
-        Reference to the stand-alone measurement entry.
+        The stand-alone measurement entry.
+        """,
+    )
+
+    x_parent_ref = SubSection(
+        section_def=MappingMeasurement,
+        description="""
+        A reference to the parent MappingMeasurement entry.
         """,
     )
 
@@ -800,21 +791,6 @@ class ElectrochemicalMeasurementResult(MeasurementResult):
     )
 
 
-class ElectrochemicalMeasurementReference(MeasurementReference):
-    """
-    A section used for referencing an ElectrochemicalMeasurement.
-    """
-
-    reference = Quantity(
-        type=ElectrochemicalMeasurement,
-        description='A reference to an ElectrochemicalMeasurement entry.',
-        a_eln=ELNAnnotation(
-            component='ReferenceEditQuantity',
-            label='ElectrochemicalMeasurement reference',
-        ),
-    )
-
-
 # --- Voltammetry & Cyclic Voltammetry (CV) ---
 class VoltammetryParameter(ElectrochemicalMeasurementParameter):
     """
@@ -1182,10 +1158,10 @@ class ElectrochemicalMappingStep(MappingStep):
         """,
     )
 
-    measurement_ref = SubSection(
-        section_def=ElectrochemicalMeasurementReference,
+    measurement = SubSection(
+        section_def=ElectrochemicalMeasurement,
         description="""
-        Reference to the stand-alone electrochemical measurement entry.
+        The stand-alone electrochemical measurement entry.
         """,
     )
 
