@@ -95,29 +95,6 @@ C_UNIT = 'milliampere'
 
 
 # --- General sections ---
-
-
-class MappedMeasurement(Measurement):
-    """
-    A measurement that is part of a mapping run.
-    """
-
-    m_def = Section(
-        extends_base_section=True,
-        description="""
-        Extends the base Measurement class with a reference 
-        to a parent MappingMeasurement entry.
-        """,
-    )
-
-    x_parent_ref = SubSection(
-        section_def=MappingMeasurement,
-        description="""
-        A reference to the parent MappingMeasurement entry.
-        """,
-    )
-
-
 class MappingStep(ActivityStep):
     """
     A single measurement step at a defined stage/sample coordinate within a mapping run.
