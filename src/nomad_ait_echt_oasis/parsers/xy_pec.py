@@ -474,19 +474,18 @@ class XYPECParser(MatchingParser):
         an electrochemical mapping step.
         """
         step = ElectrochemicalMappingStep()
-        step.name = f'{technique} at stage x = {pos_x:.1f} mm, y = {pos_y:.1f} mm'
+        step.name = f'{technique} at stage x={pos_x:.1f}, y={pos_y:.1f} mm'
         step.x_absolute = pos_x * ureg.millimeter
         step.y_absolute = pos_y * ureg.millimeter
 
-        step.measurement_ref = ElectrochemicalMeasurementReference(reference=child.data)
-
-        # Set absolute reference path to the child entry
+        ref_val = child.data
         if hasattr(child, 'metadata') and child.metadata is not None:
             upload_id = child.metadata.upload_id
             entry_id = child.metadata.entry_id
             if upload_id and entry_id:
-                ref_string = f'../uploads/{upload_id}/archive/{entry_id}#data'
-                step.measurement_ref.reference = ref_string
+                ref_val = f'../uploads/{upload_id}/archive/{entry_id}#/data'
+
+        step.measurement_ref = ElectrochemicalMeasurementReference(reference=ref_val)
 
         return step
 
