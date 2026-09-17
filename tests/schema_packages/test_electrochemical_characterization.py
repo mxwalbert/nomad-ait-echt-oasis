@@ -18,6 +18,7 @@ from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization impor
     ECSAResult,
     ElectrochemicalMapping,
     ElectrochemicalMappingStep,
+    ElectrochemicalMeasurementReference,
     ElectrochemicalMeasurementResult,
     Electrolyte,
     FrequencyResponseAnalyser,
@@ -489,7 +490,7 @@ def test_electrochemical_mapping(archive):
         x_absolute=10.0 * ureg.millimeter,
         y_absolute=25.0 * ureg.millimeter,
     )
-    step1.measurement = cv
+    step1.measurement_ref = ElectrochemicalMeasurementReference(reference=cv)
 
 
     # to_task fallback when no parent workflow exists

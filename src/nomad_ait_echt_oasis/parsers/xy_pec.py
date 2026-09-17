@@ -23,7 +23,7 @@ from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization impor
     ECSAResult,
     ElectrochemicalMapping,
     ElectrochemicalMappingStep,
-    ElectrochemicalMeasurement,
+    ElectrochemicalMeasurementReference,
     Electrolyte,
     ReferenceElectrode,
     ThreeElectrodeCell,
@@ -464,20 +464,30 @@ class XYPECParser(MatchingParser):
 
     def _parse_mapping(
         self,
-        entry: ElectrochemicalMeasurement,
+        child: 'EntryArchive',
         pos_x: float,
         pos_y: float,
-        technique: str = 'Measurement',
+        technique: str,
     ) -> ElectrochemicalMappingStep:
         """
         Parse an electrochemical measurement into
         an electrochemical mapping step.
         """
         step = ElectrochemicalMappingStep()
-        step.measurement = entry
         step.name = f'{technique} at stage x = {pos_x:.1f} mm, y = {pos_y:.1f} mm'
         step.x_absolute = pos_x * ureg.millimeter
         step.y_absolute = pos_y * ureg.millimeter
+
+        step.measurement_ref = ElectrochemicalMeasurementReference(reference=child.data)
+
+        # Set absolute reference path to the child entry
+        if hasattr(child, 'metadata') and child.metadata is not None:
+            upload_id = child.metadata.upload_id
+            entry_id = child.metadata.entry_id
+            if upload_id and entry_id:
+                ref_string = f'../uploads/{upload_id}/archive/{entry_id}#data'
+                step.measurement_ref.reference = ref_string
+
         return step
 
     def parse(  # noqa: PLR0912, PLR0915
@@ -491,7 +501,7 @@ class XYPECParser(MatchingParser):
         self.archive = archive
         self.logger = logger
 
-        logger.info('Parsing XY-PEC CAMELS measurement file', mainfile=mainfile)
+        logger.info('Parsing XY-PEC CAMELS measurement file')
 
         data = (
             archive.data
@@ -550,9 +560,10 @@ class XYPECParser(MatchingParser):
                         logger.warning(f'Could not parse {cv_key}')
                         child_archives.pop(cv_key, None)
                     else:
-                        child_archives[cv_key].data = cv_entry
+                        child = child_archives[cv_key]
+                        child.data = cv_entry
                         cv_mapping = self._parse_mapping(
-                            cv_entry, pos_x, pos_y, technique='Cyclic Voltammetry'
+                            child, pos_x, pos_y, 'Cyclic Voltammetry'
                         )
                         data.steps.append(cv_mapping)
 
@@ -564,9 +575,10 @@ class XYPECParser(MatchingParser):
                         logger.warning(f'Could not parse {ecsa_key}')
                         child_archives.pop(ecsa_key, None)
                     else:
-                        child_archives[ecsa_key].data = ecsa_entry
+                        child = child_archives[ecsa_key]
+                        child.data = ecsa_entry
                         ecsa_mapping = self._parse_mapping(
-                            ecsa_entry, pos_x, pos_y, technique='ECSA Measurement'
+                            child, pos_x, pos_y, 'ECSA Measurement'
                         )
                         data.steps.append(ecsa_mapping)
 
@@ -576,7 +588,4 @@ class XYPECParser(MatchingParser):
                     )
 
         archive.data = data
-        logger.info(
-            'XY-PEC measurement parsed successfully',
-            n_points=len(data.steps),
-        )
+        logger.info('XY-PEC measurement parsed successfully')

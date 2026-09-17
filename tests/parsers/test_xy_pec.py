@@ -59,11 +59,11 @@ def test_xy_pec_parser():
 
     cv_steps = [
         s for s in archive.data.steps
-        if isinstance(s.measurement, CyclicVoltammetry)
+        if isinstance(s.measurement_ref.reference, CyclicVoltammetry)
     ]
     ecsa_steps = [
         s for s in archive.data.steps
-        if isinstance(s.measurement, ECSAMeasurement)
+        if isinstance(s.measurement_ref.reference, ECSAMeasurement)
     ]
 
     assert len(cv_steps) == EXPECTED_POINTS
@@ -74,7 +74,7 @@ def test_xy_pec_parser():
         assert cv_map.name is not None and len(cv_map.name) > 0
         assert cv_map.x_absolute is not None
         assert cv_map.y_absolute is not None
-        cv = cv_map.measurement
+        cv = cv_map.measurement_ref.reference
         assert isinstance(cv, CyclicVoltammetry)
         assert cv.name is not None and len(cv.name) > 0
         assert isinstance(cv.parameters, CVParameter)
@@ -94,7 +94,7 @@ def test_xy_pec_parser():
         assert ecsa_map.name is not None and len(ecsa_map.name) > 0
         assert ecsa_map.x_absolute is not None
         assert ecsa_map.y_absolute is not None
-        ecsa = ecsa_map.measurement
+        ecsa = ecsa_map.measurement_ref.reference
         assert isinstance(ecsa, ECSAMeasurement)
         assert ecsa.name is not None and len(ecsa.name) > 0
         assert isinstance(ecsa.parameters, ECSAParameter)
@@ -276,7 +276,7 @@ def test_parser_metadata_fallbacks_and_elapsed_time(tmp_path):
     assert cv_map.x_absolute.to('millimeter').magnitude == pytest.approx(12.5)
     assert cv_map.y_absolute.to('millimeter').magnitude == pytest.approx(25.0)
 
-    cv = cv_map.measurement
+    cv = cv_map.measurement_ref.reference
     assert isinstance(cv, CyclicVoltammetry)
     assert cv.name is not None
     assert cv.cell is not None
@@ -293,7 +293,7 @@ def test_parser_metadata_fallbacks_and_elapsed_time(tmp_path):
 
     ecsa_map = data.steps[1]
     assert isinstance(ecsa_map, ElectrochemicalMappingStep)
-    ecsa = ecsa_map.measurement
+    ecsa = ecsa_map.measurement_ref.reference
     assert isinstance(ecsa, ECSAMeasurement)
     assert ecsa.name is not None
     ecsa_res = ecsa.results[0]
@@ -346,7 +346,7 @@ def test_parser_subprotocol_skip_cases(tmp_path):
     assert len(archive.data.steps) == 1
     ecsa_map = archive.data.steps[0]
     assert isinstance(ecsa_map, ElectrochemicalMappingStep)
-    ecsa = ecsa_map.measurement
+    ecsa = ecsa_map.measurement_ref.reference
     assert isinstance(ecsa, ECSAMeasurement)
     assert len(ecsa.results[0].runs) == 0
 
@@ -385,7 +385,7 @@ def test_parser_with_predefined_cell_parameters(tmp_path):
     assert len(archive.data.steps) == 1
     cv_map = archive.data.steps[0]
     assert isinstance(cv_map, ElectrochemicalMappingStep)
-    cv = cv_map.measurement
+    cv = cv_map.measurement_ref.reference
     assert isinstance(cv, CyclicVoltammetry)
     assert cv.cell.electrolyte.ph_value == 2.0
     assert cv.cell.electrolyte.description == '0.1M H2SO4'
@@ -441,7 +441,7 @@ def test_parser_sample_reference_edge_cases(tmp_path):
 
         data = archive.data
         assert len(data.steps) == 1
-        cv = data.steps[0].measurement
+        cv = data.steps[0].measurement_ref.reference
         assert isinstance(cv, CyclicVoltammetry)
 
         if case_name == 'missing_sample' or case_name == 'empty_sample':
@@ -521,7 +521,7 @@ def test_parse_cv_and_ecsa_parameters(tmp_path):
     assert len(data.steps) == 2
 
     # Check CV
-    cv = data.steps[0].measurement
+    cv = data.steps[0].measurement_ref.reference
     assert isinstance(cv, CyclicVoltammetry)
     assert isinstance(cv.parameters, CVParameter)
     assert cv.parameters.initial_potential.to('volt').magnitude == pytest.approx(0.0)
@@ -536,7 +536,7 @@ def test_parse_cv_and_ecsa_parameters(tmp_path):
     assert cv_res.scan_rate.to('volt / second').magnitude == pytest.approx(0.5)
 
     # Check ECSA
-    ecsa = data.steps[1].measurement
+    ecsa = data.steps[1].measurement_ref.reference
     assert isinstance(ecsa, ECSAMeasurement)
     assert isinstance(ecsa.parameters, ECSAParameter)
     assert len(ecsa.parameters.runs) == 2
