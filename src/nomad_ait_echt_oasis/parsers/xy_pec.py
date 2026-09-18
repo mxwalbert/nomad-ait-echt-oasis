@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import h5py
 import numpy as np
+from nomad.datamodel import EntryMetadata
 from nomad.datamodel.metainfo.basesections import (
     CompositeSystemReference,
     InstrumentReference,
@@ -366,16 +367,17 @@ class XYPECParser(MatchingParser):
         if t_arr is not None:
             cv_res.time = t_arr * ureg.second
 
+        cv_samples = (
+            [s.m_copy(deep=True) for s in data.samples] if data.samples else None
+        )
         cv_entry = CyclicVoltammetry(
             name=name,
             results=[cv_res],
             cell=cell,
-            samples=data.samples,
+            samples=cv_samples,
         )
 
         cv_entry.parameters = cv_param
-
-        cv_entry.normalize(self.archive, self.logger)
 
         return cv_entry
 
@@ -449,16 +451,17 @@ class XYPECParser(MatchingParser):
 
             ecsa_res.runs.append(run_cv)
 
+        ecsa_samples = (
+            [s.m_copy(deep=True) for s in data.samples] if data.samples else None
+        )
         ecsa_entry = ECSAMeasurement(
             name=name,
             results=[ecsa_res],
             cell=cell,
-            samples=data.samples,
+            samples=ecsa_samples,
         )
 
         ecsa_entry.parameters = ecsa_params
-
-        ecsa_entry.normalize(self.archive, self.logger)
 
         return ecsa_entry
 
@@ -548,19 +551,22 @@ class XYPECParser(MatchingParser):
                 sub_var = sub[var_key]
 
                 try:
-                    cell = self._parse_cell(sub_var)
                     pos_x, pos_y = self._parse_position(sub_var)
 
                     cv_key = f'{sub_key}/CyclicVoltammetry'
                     cv_name = f'{data.name} {cv_key}'
+                    cv_cell = self._parse_cell(sub_var)
 
-                    cv_entry = self._parse_cv(sub, cell, data, name=cv_name)
+                    cv_entry = self._parse_cv(sub, cv_cell, data, name=cv_name)
                     if cv_entry is None:
                         logger.warning(f'Could not parse {cv_key}')
                         child_archives.pop(cv_key, None)
                     else:
                         child = child_archives[cv_key]
                         child.data = cv_entry
+                        if getattr(child, 'metadata', None) is None:
+                            child.metadata = EntryMetadata(entry_name=cv_name)
+                        cv_entry.normalize(child, logger)
                         cv_mapping = self._parse_mapping(
                             child, pos_x, pos_y, 'Cyclic Voltammetry'
                         )
@@ -568,14 +574,18 @@ class XYPECParser(MatchingParser):
 
                     ecsa_key = f'{sub_key}/ECSAMeasurement'
                     ecsa_name = f'{data.name} {ecsa_key}'
+                    ecsa_cell = self._parse_cell(sub_var)
 
-                    ecsa_entry = self._parse_ecsa(sub, cell, data, name=ecsa_name)
+                    ecsa_entry = self._parse_ecsa(sub, ecsa_cell, data, name=ecsa_name)
                     if ecsa_entry is None:
                         logger.warning(f'Could not parse {ecsa_key}')
                         child_archives.pop(ecsa_key, None)
                     else:
                         child = child_archives[ecsa_key]
                         child.data = ecsa_entry
+                        if getattr(child, 'metadata', None) is None:
+                            child.metadata = EntryMetadata(entry_name=ecsa_name)
+                        ecsa_entry.normalize(child, logger)
                         ecsa_mapping = self._parse_mapping(
                             child, pos_x, pos_y, 'ECSA Measurement'
                         )

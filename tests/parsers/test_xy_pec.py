@@ -44,7 +44,9 @@ def test_xy_pec_parser():
     assert isinstance(mainfile_keys, list)
     assert len(mainfile_keys) == EXPECTED_TOTAL_RESULTS
 
-    child_archives = {k: EntryArchive() for k in mainfile_keys}
+    child_archives = {
+        k: EntryArchive(metadata=EntryMetadata(entry_name=k)) for k in mainfile_keys
+    }
     parser.parse(TEST_FILE, archive, logger, child_archives=child_archives)
 
     assert len(child_archives) == EXPECTED_TOTAL_RESULTS
@@ -56,6 +58,12 @@ def test_xy_pec_parser():
 
     # Run normalizer
     archive.data.normalize(archive, logger)
+
+    # Verify archiving and metadata indexing succeed without IndexError
+    archive.metadata.apply_archive_metadata(archive)
+    for child in child_archives.values():
+        if child.metadata:
+            child.metadata.apply_archive_metadata(child)
 
     cv_steps = [
         s for s in archive.data.steps
@@ -451,11 +459,14 @@ def test_parser_sample_reference_edge_cases(tmp_path):
             assert len(data.samples) == 1
             assert data.samples[0].lab_id == 'SAMPLE-ID-99'
             assert data.samples[0].name == 'SAMPLE-ID-99'
-            assert cv.cell.working_electrode.sample == data.samples[0]
+            assert cv.cell.working_electrode.sample.lab_id == data.samples[0].lab_id
+            assert cv.cell.working_electrode.sample.name == data.samples[0].name
         elif case_name == 'name_only':
             assert len(data.samples) == 1
             assert data.samples[0].name == 'SAMPLE-NAME-88'
-            assert cv.cell.working_electrode.sample == data.samples[0]
+            assert cv.cell.working_electrode.sample.name == data.samples[0].name
+
+        archive.metadata.apply_archive_metadata(archive)
 
 
 def test_parse_cv_and_ecsa_parameters(tmp_path):
