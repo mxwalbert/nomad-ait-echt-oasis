@@ -4,10 +4,9 @@ from nomad.datamodel.metainfo.basesections import (
     CompositeSystem,
     CompositeSystemReference,
 )
-from nomad.datamodel.metainfo.plot import PlotSection
 from nomad.units import ureg
 
-from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
+from nomad_ait_echt_oasis.schema_packages.electrochemical_measurement import (
     CounterElectrode,
     CVCycle,
     CVParameter,
@@ -436,7 +435,7 @@ def test_voltammetry_normalizer(archive):
 
 def test_cv_scan_rate_calculation(archive):
     """Test calculation of scan_rate from CV data and leaving it empty when not calculable."""
-    from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cv import (
+    from nomad_ait_echt_oasis.normalizers.electrochemical_measurement.cv import (
         calculate_cv_scan_rate,
     )
 

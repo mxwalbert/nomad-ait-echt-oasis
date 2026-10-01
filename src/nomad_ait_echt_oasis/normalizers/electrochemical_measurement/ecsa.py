@@ -5,10 +5,10 @@ import plotly.graph_objs as go
 from nomad.datamodel.metainfo.plot import PlotlyFigure
 from nomad.units import ureg
 
-from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cell import (
+from nomad_ait_echt_oasis.normalizers.electrochemical_measurement.cell import (
     normalize_three_electrode_cell,
 )
-from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cv import (
+from nomad_ait_echt_oasis.normalizers.electrochemical_measurement.cv import (
     C_UNIT,
     normalize_cv_result,
 )
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from nomad.datamodel.datamodel import EntryArchive
     from structlog.stdlib import BoundLogger
 
-    from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
+    from nomad_ait_echt_oasis.schema_packages.electrochemical_measurement import (
         ECSAMeasurement,
         ECSAResult,
     )

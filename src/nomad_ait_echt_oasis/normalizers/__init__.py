@@ -1,5 +1,5 @@
-from . import electrochemical_characterization
+from . import electrochemical_measurement
 
 __all__ = [
-    'electrochemical_characterization',
+    'electrochemical_measurement',
 ]

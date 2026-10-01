@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from nomad.datamodel.datamodel import EntryArchive
     from structlog.stdlib import BoundLogger
 
-    from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
+    from nomad_ait_echt_oasis.schema_packages.electrochemical_measurement import (
         ElectrochemicalMapping,
     )
 

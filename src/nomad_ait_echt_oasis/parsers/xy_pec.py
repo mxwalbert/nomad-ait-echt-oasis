@@ -14,7 +14,7 @@ from nomad.parsing.parser import MatchingParser
 from nomad.units import ureg
 from nomad_measurements.mapping.schema import RectangularSampleAlignment
 
-from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
+from nomad_ait_echt_oasis.schema_packages.electrochemical_measurement import (
     CounterElectrode,
     CVParameter,
     CVResult,

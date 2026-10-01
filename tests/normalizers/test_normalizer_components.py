@@ -2,22 +2,22 @@ import numpy as np
 import pytest
 from nomad.units import ureg
 
-from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cell import (
+from nomad_ait_echt_oasis.normalizers.electrochemical_measurement.cell import (
     normalize_reference_electrode,
     normalize_three_electrode_cell,
 )
-from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cv import (
+from nomad_ait_echt_oasis.normalizers.electrochemical_measurement.cv import (
     auto_decompose_cycles,
     generate_cv_plotly_figures,
 )
-from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.ecsa import (
+from nomad_ait_echt_oasis.normalizers.electrochemical_measurement.ecsa import (
     evaluate_run_capacitance,
     extract_anodic_cathodic_arcs,
     extract_capacitive_current,
     filter_arc_window,
     normalize_ecsa_result,
 )
-from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.result import (
+from nomad_ait_echt_oasis.normalizers.electrochemical_measurement.result import (
     normalize_measurement_signals,
 )
 from nomad_ait_echt_oasis.normalizers.utils import (
@@ -26,7 +26,7 @@ from nomad_ait_echt_oasis.normalizers.utils import (
     get_quantity_scalar,
     parse_cycle_slice,
 )
-from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
+from nomad_ait_echt_oasis.schema_packages.electrochemical_measurement import (
     CVCycle,
     CVParameter,
     CVResult,

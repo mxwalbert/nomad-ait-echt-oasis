@@ -11,7 +11,7 @@ from nomad_ait_echt_oasis.parsers.xy_pec import (
     _decode_val,
     _extract_legacy_var,
 )
-from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
+from nomad_ait_echt_oasis.schema_packages.electrochemical_measurement import (
     CVParameter,
     CVResult,
     CyclicVoltammetry,

@@ -5,10 +5,10 @@ import plotly.graph_objs as go
 from nomad.datamodel.metainfo.plot import PlotlyFigure
 from nomad.units import ureg
 
-from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cell import (
+from nomad_ait_echt_oasis.normalizers.electrochemical_measurement.cell import (
     normalize_three_electrode_cell,
 )
-from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.result import (
+from nomad_ait_echt_oasis.normalizers.electrochemical_measurement.result import (
     C_UNIT,
     CD_UNIT,
     normalize_measurement_signals,
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from nomad.datamodel.datamodel import EntryArchive
     from structlog.stdlib import BoundLogger
 
-    from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
+    from nomad_ait_echt_oasis.schema_packages.electrochemical_measurement import (
         CVCycle,
         CVResult,
         CyclicVoltammetry,
@@ -153,7 +153,7 @@ def create_cv_cycle(  # noqa: PLR0913
     selector: slice | np.ndarray | None = None,
 ) -> 'CVCycle':
     """Construct a CVCycle section applying optional slice or boolean mask selection."""
-    from nomad_ait_echt_oasis.schema_packages.electrochemical_characterization import (
+    from nomad_ait_echt_oasis.schema_packages.electrochemical_measurement import (
         CVCycle,
     )
 

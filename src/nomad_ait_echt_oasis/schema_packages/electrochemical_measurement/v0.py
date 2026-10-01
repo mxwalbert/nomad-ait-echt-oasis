@@ -12,12 +12,10 @@ from nomad.datamodel.metainfo.annotations import (
     ELNComponentEnum,
 )
 from nomad.datamodel.metainfo.basesections import (
-    ActivityStep,
     CompositeSystem,
     CompositeSystemReference,
     Measurement,
     MeasurementResult,
-    SectionReference,
 )
 from nomad.datamodel.metainfo.plot import (
     PlotSection,
@@ -37,19 +35,24 @@ from nomad_measurements.mapping.schema import (
     MappingResult,
 )
 
-from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cell import (
+from nomad_ait_echt_oasis.normalizers.electrochemical_measurement.cell import (
     normalize_reference_electrode,
     normalize_three_electrode_cell,
 )
-from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.cv import (
+from nomad_ait_echt_oasis.normalizers.electrochemical_measurement.cv import (
     normalize_cyclic_voltammetry,
 )
-from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.ecsa import (
+from nomad_ait_echt_oasis.normalizers.electrochemical_measurement.ecsa import (
     normalize_ecsa_measurement,
     normalize_ecsa_result,
 )
-from nomad_ait_echt_oasis.normalizers.electrochemical_characterization.mapping import (
+from nomad_ait_echt_oasis.normalizers.electrochemical_measurement.mapping import (
     normalize_electrochemical_mapping,
+)
+from nomad_ait_echt_oasis.schema_packages.general import (
+    MappingStep,
+    MeasurementParameter,
+    MeasurementReference,
 )
 from nomad_ait_echt_oasis.schema_packages.infrastructure import (
     LIMSInstrument,
@@ -63,13 +66,6 @@ if TYPE_CHECKING:
     from structlog.stdlib import (
         BoundLogger,
     )
-
-try:
-    from nomad_measurements.general import (
-        NOMADMeasurementsCategory,
-    )
-except ImportError:
-    NOMADMeasurementsCategory = EntryDataCategory
 
 m_package = SchemaPackage(
     name='AIT ECHT Electrochemical Characterization',
@@ -86,97 +82,15 @@ m_package = SchemaPackage(
     """,
 )
 
-# --- Named Constants for Validation and Calculations ---
-MIN_POINTS_FOR_CYCLE_SPLIT = 10
-MIN_CYCLE_LENGTH = 4
-
 # --- Constants for abbreviating long unit strings ---
+
 CD_UNIT = 'milliampere / centimeter ** 2'
 C_UNIT = 'milliampere'
 
 
-# --- General sections ---
-
-
-class MeasurementReference(SectionReference):
-    """
-    A section used for referencing a Measurement.
-    """
-
-    reference = Quantity(
-        type=Measurement,
-        description='A reference to a Measurement entry.',
-        a_eln=ELNAnnotation(
-            component='ReferenceEditQuantity',
-            label='Measurement reference',
-        ),
-    )
-
-
-class MappingStep(ActivityStep):
-    """
-    A single measurement step at a defined stage/sample coordinate within a mapping run.
-    """
-
-    m_def = Section(
-        description="""
-        A single measurement step at a defined stage/sample coordinate 
-        within a mapping run.
-        """,
-        a_eln={
-            'overview': False,
-        },
-    )
-
-    x_absolute = Quantity(
-        type=np.float64,
-        unit='m',
-        description='Absolute x position of the measurement stage.',
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            defaultDisplayUnit='mm',
-        ),
-    )
-
-    y_absolute = Quantity(
-        type=np.float64,
-        unit='m',
-        description='Absolute y position of the measurement stage.',
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            defaultDisplayUnit='mm',
-        ),
-    )
-
-    x_relative = Quantity(
-        type=np.float64,
-        unit='m',
-        description='Relative x position on the sample.',
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            defaultDisplayUnit='mm',
-        ),
-    )
-
-    y_relative = Quantity(
-        type=np.float64,
-        unit='m',
-        description='Relative y position on the sample.',
-        a_eln=ELNAnnotation(
-            component=ELNComponentEnum.NumberEditQuantity,
-            defaultDisplayUnit='mm',
-        ),
-    )
-
-    measurement_ref = SubSection(
-        section_def=MeasurementReference,
-        description="""
-        Reference to the stand-alone measurement entry.
-        """,
-    )
-
-
 # --- Categories ---
+
+
 class ElectrochemicalMeasurementCategory(EntryDataCategory):
     """
     Category for electrochemical characterization measurements.
@@ -184,11 +98,13 @@ class ElectrochemicalMeasurementCategory(EntryDataCategory):
 
     m_def = Category(
         label='Electrochemical Testing',
-        categories=[EntryDataCategory, NOMADMeasurementsCategory],
+        categories=[EntryDataCategory],
     )
 
 
 # --- Instruments ---
+
+
 class Potentiostat(LIMSInstrument):
     """
     An electronic device that controls the potential difference between
@@ -372,6 +288,8 @@ class FrequencyResponseAnalyserReference(LIMSInstrumentReference):
 
 
 # --- Electrochemical Cell Components ---
+
+
 class Electrolyte(Solution):
     """
     An ion-transport liquid phase containing dissolved salts, acids,
@@ -667,20 +585,6 @@ class ThreeElectrodeCell(ElectrochemicalCell):
 
 
 # --- Electrochemical Measurement & Results ---
-class MeasurementParameter(ArchiveSection):
-    """
-    Base section describing the input parameters of a generic measurement.
-
-    Ontology:
-        chameo:MeasurementParameter
-        (https://w3id.org/emmo/domain/characterisation-methodology/chameo#MeasurementParameter)
-    """
-
-    m_def = Section(
-        description="""
-        Base parameters for a generic measurement.
-        """,
-    )
 
 
 class ElectrochemicalMeasurementParameter(MeasurementParameter):
@@ -821,6 +725,8 @@ class ElectrochemicalMeasurementReference(MeasurementReference):
 
 
 # --- Voltammetry & Cyclic Voltammetry (CV) ---
+
+
 class VoltammetryParameter(ElectrochemicalMeasurementParameter):
     """
     Control parameters for voltammetric excitation signals.
@@ -1172,6 +1078,9 @@ class ECSAMeasurement(ElectrochemicalMeasurement, EntryData):
         """Normalizer for ECSA measurement entry delegating to decoupled normalizer."""
         super().normalize(archive, logger)
         normalize_ecsa_measurement(self, archive, logger)
+
+
+# --- Mapping Classes ---
 
 
 class ElectrochemicalMappingStep(MappingStep):

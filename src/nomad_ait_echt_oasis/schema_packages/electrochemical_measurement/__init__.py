@@ -1,0 +1,1 @@
+from nomad_ait_echt_oasis.schema_packages.electrochemical_measurement.v0 import *
